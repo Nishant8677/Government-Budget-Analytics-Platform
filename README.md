@@ -344,7 +344,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## 👤 Author
 
-Computer Science student | Building production-grade software engineering portfolio projects.
+Computer Science student | Building production-oriented engineering portfolio projects.
 
 **Skills demonstrated in this project:**
 Database normalisation · ETL pipeline engineering · SQL view architecture ·
