@@ -1,0 +1,15 @@
+# Government Budget Analytics Platform — Python Dependencies
+# Install with:  pip install -r requirements.txt
+
+# ── Data & ETL ────────────────────────────────────────────────────────────────
+pandas>=2.0.0
+mysql-connector-python>=8.0.0
+python-dotenv>=1.0.0
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+streamlit>=1.30.0
+plotly>=5.0.0
+openpyxl>=3.1.0          # Excel export (.xlsx download buttons)
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0.0
