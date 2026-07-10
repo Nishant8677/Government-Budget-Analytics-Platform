@@ -159,8 +159,8 @@ DBMS_project/
 
 ```bash
 # 1. Clone
-git clone https://github.com/your-username/budget-analytics-platform.git
-cd budget-analytics-platform
+git clone https://github.com/Nishant8677/Government-Budget-Analytics-Platform.git
+cd Government-Budget-Analytics-Platform
 
 # 2. Install dependencies
 pip install -r requirements.txt
