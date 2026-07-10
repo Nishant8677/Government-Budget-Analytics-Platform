@@ -7,10 +7,10 @@
 [![pytest](https://img.shields.io/badge/pytest-23%20passing-brightgreen?style=for-the-badge&logo=pytest)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 
-> A production-grade analytics platform for exploring Indian Union Budget tax revenue data
-> across fiscal years 2020–2021 to 2022–2023. Built with a fully normalised MySQL schema,
-> a modular ETL pipeline with 23 automated tests, and an interactive 6-tab Streamlit dashboard.
-
+> A database engineering portfolio project demonstrating production-oriented design principles.
+> Features a scalable synthetic dataset generator supporting up to 1 million rows for performance testing,
+> advanced MySQL query optimization via covering indexes, ACID transactions (REPEATABLE READ), 
+> and concurrent ETL processing. Includes a modular Python ETL pipeline, 23 automated tests, and a 6-tab Streamlit analytics dashboard.
 ---
 
 ## 📸 Screenshots
@@ -32,6 +32,16 @@
 ---
 
 ## 🏗️ Architecture
+
+```text
+User ⇄ Streamlit Dashboard ⇄ SQL Views ⇄ MySQL Database ⇦ Python ETL ⇦ Raw CSV Data
+```
+
+**Why MySQL?**
+- **ACID transactions**: Ensures safe, all-or-nothing data ingestion.
+- **Mature optimizer**: Crucial for evaluating execution plans and index behavior.
+- **InnoDB support**: Provides Row-Level Locking and MVCC for concurrency control.
+- **Relational schema**: Enforces strict referential integrity across the 6-table domain model.
 
 ![Architecture Diagram](assets/screenshots/architecture.png)
 
@@ -70,7 +80,32 @@ All tables: `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`. Every FK column has an expl
 
 ---
 
-## ✨ Features
+## ⚙️ Engineering Documentation
+
+This project was built to demonstrate senior-level database engineering concepts. Please review the following architectural deep-dives:
+
+- [**Architecture Decisions (ADR)**](DECISIONS.md): Why MySQL? Why 3NF? Why Upserts?
+- [**Synthetic Data Generator**](DATA_GENERATOR.md): Scaling the DB to 1,000,000+ rows for performance testing.
+- [**Index Engineering & Performance**](PERFORMANCE.md): Reducing query latency by 85% via Covering Indexes.
+- [**Concurrency & Locking**](CONCURRENCY.md): Simulating and resolving race conditions and deadlocks.
+- [**Isolation Levels**](ISOLATION_LEVELS.md): Why we use `REPEATABLE READ` vs `READ COMMITTED`.
+- [**Interview Defense Guide**](DEFENSE_GUIDE.md): How to defend these design choices in a system design interview.
+
+---
+
+## ⚡ Performance Benchmarks (1 Million Rows)
+
+*(Benchmarks run on Dataset Size: 1,000,000 rows | MySQL Version: 8.0+ | Hardware: Local Desktop, 8-Core CPU, 16GB RAM)*
+
+| Metric | Before Optimization | After Optimization | Improvement |
+|---|---|---|---|
+| **ETL Throughput** | ~400 rows/sec | **~20,800 rows/sec** | Used `executemany` batched transactions |
+| **Heavy JOIN Query** | 2,066 ms | **350 ms** | Added `idx_budget_fy_sub_budget` Covering Index |
+| **Dashboard Load Time** | ~420 ms | **~38 ms** | Utilized Streamlit `@st.cache_data` Memory |
+
+---
+
+## 🛠️ Features
 
 ### 📊 Analytics Dashboard (6 Tabs)
 
@@ -80,7 +115,7 @@ All tables: `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`. Every FK column has an expl
 | 📈 Scheme Analysis | Top-N bar chart with slider, year-over-year grouped comparison |
 | ⚖️ Budget vs Actuals | Scatter plot with 100% utilisation line, utilisation % bar |
 | 💡 Insights | **Auto-generated** — top scheme, highest growth, largest revision, avg utilisation |
-| 🗄️ Query Console | 5 pre-built domain SQL queries with SQL viewer + CSV/Excel export |
+| 🗄️ Query Console | 5 pre-built (read-only) domain SQL queries with SQL viewer + CSV/Excel export |
 | 🔍 Data Explorer | Searchable, sortable table with CSV + Excel download |
 
 ### 🏗️ Engineering Features
@@ -93,6 +128,17 @@ All tables: `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`. Every FK column has an expl
 - **File logging** — every run appended to `logs/application.log`
 - **manage.py CLI** — `setup`, `load`, `validate`, `dashboard`, `test`
 - **Excel export** — download any query result or explorer view as `.xlsx`
+
+---
+
+## 🧠 What I Learned
+
+Through this project I learned:
+- **Designing normalized relational schemas** (3NF) to ensure absolute data integrity.
+- **Using transactions safely** to prevent partial loads and data corruption.
+- **Reading execution plans** (`EXPLAIN FORMAT=JSON`) to understand the MySQL query optimizer.
+- **Benchmarking SQL queries** and engineering covering indexes to reduce latency.
+- **Building reproducible ETL pipelines** using idempotent upserts and automated testing.
 
 ---
 
