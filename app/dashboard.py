@@ -276,9 +276,11 @@ def load_scheme_summary(fiscal_year: str) -> pd.DataFrame:
 def load_budget_overview(fiscal_year: str, scheme: str) -> pd.DataFrame:
     conditions, params = [], []
     if fiscal_year != "All Years":
-        conditions.append("fiscal_year = %s");  params.append(fiscal_year)
+        conditions.append("fiscal_year = %s")
+        params.append(fiscal_year)
     if scheme != "All Schemes":
-        conditions.append("scheme_name = %s"); params.append(scheme)
+        conditions.append("scheme_name = %s")
+        params.append(scheme)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     return _run_query(
         f"""SELECT group_name, scheme_name, sub_scheme_name, major_head_code,
@@ -353,8 +355,10 @@ def _fmt_crore(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "N/A"
     v = float(v)
-    if abs(v) >= 1_00_000: return f"₹{v/1_00_000:.2f}L Cr"
-    if abs(v) >= 1_000:    return f"₹{v/1_000:.1f}K Cr"
+    if abs(v) >= 1_00_000:
+        return f"₹{v/1_00_000:.2f}L Cr"
+    if abs(v) >= 1_000:
+        return f"₹{v/1_000:.1f}K Cr"
     return f"₹{v:.1f} Cr"
 
 
@@ -475,8 +479,12 @@ with tab_ov:
     st.markdown("---")
     st.markdown('<div class="section-header">📉 National Tax Revenue Trend</div>', unsafe_allow_html=True)
     if not fy_totals.empty:
-        trend = fy_totals.melt("fiscal_year",["total_actuals","total_budget","total_revised"],"Metric","₹ Crore").dropna()
-        trend["Metric"] = trend["Metric"].map({"total_actuals":"Actuals","total_budget":"Budget","total_revised":"Revised"})
+        trend = fy_totals.melt(
+            "fiscal_year", ["total_actuals", "total_budget", "total_revised"], "Metric", "₹ Crore"
+        ).dropna()
+        trend["Metric"] = trend["Metric"].map(
+            {"total_actuals": "Actuals", "total_budget": "Budget", "total_revised": "Revised"}
+        )
         fig = px.line(trend, x="fiscal_year", y="₹ Crore", color="Metric", markers=True,
                       title="Annual Tax Revenue: Actuals vs Budget vs Revised (₹ Crore)",
                       color_discrete_sequence=PALETTE, template=PLOTLY_TEMPLATE)
@@ -537,8 +545,10 @@ with tab_ba:
     util["util_pct"] = (util["total_actuals"] / util["total_budget"] * 100).round(2)
     if not util.empty:
         ca, cb = st.columns(2)
-        with ca: st.metric("Schemes Over-performing", len(util[util["util_pct"] > 100]))
-        with cb: st.metric("Schemes Under-performing (<80%)", len(util[util["util_pct"] < 80]))
+        with ca:
+            st.metric("Schemes Over-performing", len(util[util["util_pct"] > 100]))
+        with cb:
+            st.metric("Schemes Under-performing (<80%)", len(util[util["util_pct"] < 80]))
         mx = max(util["total_budget"].max(), util["total_actuals"].max())
         fig = px.scatter(util, x="total_budget", y="total_actuals", size="util_pct",
                          color="util_pct", hover_name="scheme_name",
@@ -669,7 +679,7 @@ with tab_qc:
                     st.download_button(
                         "⬇️ Download CSV",
                         result_df.to_csv(index=False),
-                        f"query_result.csv", "text/csv",
+                        "query_result.csv", "text/csv",
                     )
                 with c2:
                     try:

@@ -30,7 +30,6 @@ Design decisions
 """
 from __future__ import annotations
 
-import mysql.connector
 from mysql.connector import Error
 
 from utils.db import get_connection

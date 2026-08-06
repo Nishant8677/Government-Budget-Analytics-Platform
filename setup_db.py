@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config.validator import validate  # noqa: E402
-from database.setup import setup      # noqa: E402
+from database.setup import setup  # noqa: E402
 
 if __name__ == "__main__":
     validate()   # exits cleanly if .env is misconfigured

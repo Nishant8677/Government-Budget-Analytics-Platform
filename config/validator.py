@@ -33,7 +33,7 @@ def validate() -> None:
     for a configuration error that the user needs to fix manually.
     """
     # Import here (after load_dotenv has run) to capture runtime values
-    from config.settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+    from config.settings import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
     errors: list[str] = []
 

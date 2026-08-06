@@ -1,0 +1,25 @@
+# Explicit rule set so CI is reproducible: ruff's defaults shift between
+# releases, and a lint gate that changes meaning on upgrade is not a gate.
+#
+# E/W  pycodestyle    - real style errors
+# F    pyflakes       - unused imports, undefined names, f-string mistakes
+# I    isort          - import ordering
+#
+# Deliberately not enabled yet: BLE001 (blind except), C408, PLW1510, TRY201.
+# These flag genuine issues in etl/ and scripts/ that need judgement rather than
+# a mechanical fix -- several `except Exception` handlers exist so the ETL can
+# roll back and report cleanly, and narrowing them is a behavioural change.
+# Left for a focused pass rather than bundled into a docs cleanup.
+line-length = 120
+exclude = [".venv", "venv", "__pycache__"]
+
+[lint]
+select = ["E", "W", "F", "I"]
+
+[lint.per-file-ignores]
+# These entry points prepend the project root to sys.path before importing
+# config/utils, because they are run as scripts rather than as an installed
+# package. The imports genuinely cannot precede that bootstrap, so E402 is
+# suppressed here rather than worked around with a lie.
+"app/dashboard.py" = ["E402"]
+"database/setup.py" = ["E402"]

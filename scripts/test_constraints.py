@@ -1,10 +1,12 @@
 import os
 import sys
+
 import mysql.connector
 from dotenv import load_dotenv
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+from config.settings import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
+
 
 def get_connection():
     return mysql.connector.connect(
@@ -54,10 +56,10 @@ if __name__ == "__main__":
     print("============================================================")
     print("BudgetIQ Constraint Validation Tests")
     print("============================================================")
-    
+
     conn = get_connection()
     # Turn auto-commit ON for these tests so we don't have to rollback after every failure
-    conn.autocommit = True 
+    conn.autocommit = True
     cursor = conn.cursor()
 
     try:
@@ -67,6 +69,6 @@ if __name__ == "__main__":
     finally:
         cursor.close()
         conn.close()
-    
+
     print("\n============================================================")
     print("Constraint testing complete. All application logic is protected by DB layer.")

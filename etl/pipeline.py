@@ -8,10 +8,10 @@ Callers (run_etl.py, tests, CI) only need to call run_pipeline().
 """
 from __future__ import annotations
 
-from utils.logger import get_logger
 from etl.extract import extract
-from etl.transform import transform, get_fiscal_year_records
 from etl.load import load
+from etl.transform import get_fiscal_year_records, transform
+from utils.logger import get_logger
 
 logger = get_logger(__name__)
 

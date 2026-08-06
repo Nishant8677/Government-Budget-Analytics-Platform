@@ -84,24 +84,53 @@ All tables: `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`. Every FK column has an expl
 
 This project was built to demonstrate senior-level database engineering concepts. Please review the following architectural deep-dives:
 
-- [**Architecture Decisions (ADR)**](DECISIONS.md): Why MySQL? Why 3NF? Why Upserts?
-- [**Synthetic Data Generator**](DATA_GENERATOR.md): Scaling the DB to 1,000,000+ rows for performance testing.
-- [**Index Engineering & Performance**](PERFORMANCE.md): Reducing query latency by 85% via Covering Indexes.
-- [**Concurrency & Locking**](CONCURRENCY.md): Simulating and resolving race conditions and deadlocks.
-- [**Isolation Levels**](ISOLATION_LEVELS.md): Why we use `REPEATABLE READ` vs `READ COMMITTED`.
-- [**Interview Defense Guide**](DEFENSE_GUIDE.md): How to defend these design choices in a system design interview.
+- [**Architecture Decisions (ADR)**](DECISIONS.md): Why MySQL? Why 3NF? Why Upserts? Why the covering index was rejected. Isolation level and locking reasoning live here too.
+- [**Synthetic Data Generator**](DATA_GENERATOR.md): Scaling the database for performance testing.
+- [**Index Engineering & Performance**](PERFORMANCE.md): Measuring the covering index, and why it was not adopted.
+
+Concurrency behaviour can be exercised directly with
+`scripts/simulate_concurrency.py` and `scripts/test_constraints.py`.
 
 ---
 
-## ⚡ Performance Benchmarks (1 Million Rows)
+## ⚡ Performance
 
-*(Benchmarks run on Dataset Size: 1,000,000 rows | MySQL Version: 8.0+ | Hardware: Local Desktop, 8-Core CPU, 16GB RAM)*
+Measured on **921,696 synthetic rows** (MySQL 8.0.43, Windows 11, 12 logical
+CPUs, InnoDB buffer pool at the 128 MB default). Reproduce with:
 
-| Metric | Before Optimization | After Optimization | Improvement |
-|---|---|---|---|
-| **ETL Throughput** | ~400 rows/sec | **~20,800 rows/sec** | Used `executemany` batched transactions |
-| **Heavy JOIN Query** | 2,066 ms | **350 ms** | Added `idx_budget_fy_sub_budget` Covering Index |
-| **Dashboard Load Time** | ~420 ms | **~38 ms** | Utilized Streamlit `@st.cache_data` Memory |
+```bash
+python scripts/benchmark_index.py --trials 3 --repeats 7
+```
+
+### Covering index: built, measured, not adopted
+
+| Arm | Median | vs baseline |
+|---|---|---|
+| No index | 1800.9 ms | — |
+| `idx_budget_fy_sub_budget` added | 1785.9 ms | +0.8% |
+| Same index, `FORCE INDEX` | 1661.3 ms | +7.8% |
+
+The 0.8% sits inside a ±133 ms run-to-run spread, so it is noise. `EXPLAIN` is
+identical before and after `CREATE INDEX`: the optimizer never uses the new
+index, because `budget_data` is already reached by `eq_ref` on the pre-existing
+UNIQUE key `uq_budget_sub_year`. The index is therefore **not** in
+`database/schema.sql`.
+
+Full method, all raw samples, and the `EXPLAIN FORMAT=JSON` for every arm are in
+[PERFORMANCE.md](PERFORMANCE.md) and `results/index_benchmark.json`.
+
+> Earlier versions of this README credited this index with an 80–85% reduction.
+> That index had never existed in the schema and no script in the repository
+> recorded a measurement. The figures above replace it.
+
+### Not currently measured
+
+Two previously published figures — ETL throughput (~400 → ~20,800 rows/sec) and
+dashboard load time (~420 ms → ~38 ms via `@st.cache_data`) — have been removed
+rather than restated. `scripts/benchmark.py` and `scripts/benchmark_cache.py`
+print their results and persist nothing, so neither number can be reproduced
+from this repository. They will return if and when a script writes them to a
+file the way `benchmark_index.py` does.
 
 ---
 

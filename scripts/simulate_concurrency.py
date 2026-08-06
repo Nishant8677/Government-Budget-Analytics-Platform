@@ -1,13 +1,15 @@
 import os
 import sys
-import time
 import threading
+import time
+
 import mysql.connector
 from dotenv import load_dotenv
 
 # Add parent directory to path so we can import config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+from config.settings import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
+
 
 def get_connection():
     return mysql.connector.connect(
@@ -40,12 +42,12 @@ def concurrent_insert_worker(worker_id: int):
         """
         cursor.execute(sql_ss)
         print(f"[Worker {worker_id}] Executed sub_scheme UPSERT. Holding lock...")
-        
+
         # 2. Artificial delay to ensure the other thread hits the lock
         time.sleep(2)
 
         # 3. Insert budget data
-        # To demonstrate deadlocks, we would insert in opposite order. 
+        # To demonstrate deadlocks, we would insert in opposite order.
         # But here we just demonstrate Lock Wait Timeout or successful serialization.
         sql_budget = """
             INSERT INTO budget_data (sub_scheme_id, fiscal_year_id, budget)
@@ -75,10 +77,10 @@ if __name__ == "__main__":
 
     t1.start()
     # Stagger slightly so T1 gets the lock first
-    time.sleep(0.5) 
+    time.sleep(0.5)
     t2.start()
 
     t1.join()
     t2.join()
-    
+
     print("\nSimulation Complete. Notice how Worker 2 blocks waiting for Worker 1 to release the row lock.")

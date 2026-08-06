@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -9,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 
 from utils.db import get_connection
+
 
 @st.cache_data
 def fetch_data_cached(query: str):
@@ -26,7 +28,7 @@ def fetch_data_uncached(query: str):
 if __name__ == "__main__":
     load_dotenv()
     print("Benchmarking Dashboard Data Loading...")
-    
+
     query = """
         SELECT s.scheme_name, SUM(b.budget) as total_budget
         FROM budget_data b
@@ -36,21 +38,21 @@ if __name__ == "__main__":
         ORDER BY total_budget DESC
         LIMIT 10
     """
-    
+
     # Uncached
     start = time.time()
     fetch_data_uncached(query)
     uncached_time = (time.time() - start) * 1000
-    
+
     # Cached (Cold Start)
     start = time.time()
     fetch_data_cached(query)
     cold_cache_time = (time.time() - start) * 1000
-    
+
     # Cached (Warm Start)
     start = time.time()
     fetch_data_cached(query)
     warm_cache_time = (time.time() - start) * 1000
-    
+
     print(f"Without Cache: {uncached_time:.2f} ms")
     print(f"With Cache: {warm_cache_time:.2f} ms")
