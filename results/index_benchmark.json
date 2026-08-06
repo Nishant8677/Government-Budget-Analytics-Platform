@@ -1,0 +1,520 @@
+{
+  "environment": {
+    "timestamp_utc": "2026-08-06T18:31:34+00:00",
+    "mysql_version": "8.0.43",
+    "innodb_buffer_pool_mb": 128.0,
+    "os": "Windows 10",
+    "machine": "AMD64",
+    "cpu_count": 12,
+    "python": "3.11.4",
+    "row_counts": {
+      "budget_data": 921696,
+      "sub_schemes": 92240,
+      "schemes": 23,
+      "fiscal_years": 13
+    },
+    "buffer_pool_flushed_between_arms": false,
+    "note": "Warm-cache measurements. The buffer pool cannot be flushed from a client connection without SUPER privileges or a server restart, so both arms run warm. The comparison between arms is valid; the absolute latencies are a best case."
+  },
+  "index": {
+    "name": "idx_budget_fy_sub_budget",
+    "ddl": "CREATE INDEX idx_budget_fy_sub_budget ON budget_data (fiscal_year_id, sub_scheme_id, budget)",
+    "build_seconds_median": 4.75
+  },
+  "query": "SELECT s.scheme_name, SUM(b.budget) AS total_budget\n    FROM budget_data b\n    JOIN sub_schemes ss ON b.sub_scheme_id = ss.sub_scheme_id\n    JOIN schemes s ON ss.scheme_id = s.scheme_id\n    WHERE b.fiscal_year_id = (SELECT MAX(fiscal_year_id) FROM fiscal_years)\n    GROUP BY s.scheme_name\n    ORDER BY total_budget DESC\n    LIMIT 10",
+  "query_forced": "SELECT s.scheme_name, SUM(b.budget) AS total_budget\n    FROM budget_data b FORCE INDEX (idx_budget_fy_sub_budget)\n    JOIN sub_schemes ss ON b.sub_scheme_id = ss.sub_scheme_id\n    JOIN schemes s ON ss.scheme_id = s.scheme_id\n    WHERE b.fiscal_year_id = (SELECT MAX(fiscal_year_id) FROM fiscal_years)\n    GROUP BY s.scheme_name\n    ORDER BY total_budget DESC\n    LIMIT 10",
+  "trials": 3,
+  "repeats_per_trial": 7,
+  "results": {
+    "without_index": {
+      "n": 21,
+      "median_ms": 1800.932,
+      "mean_ms": 1838.812,
+      "min_ms": 1633.436,
+      "max_ms": 2224.02,
+      "stdev_ms": 133.278
+    },
+    "with_index": {
+      "n": 21,
+      "median_ms": 1785.891,
+      "mean_ms": 1832.991,
+      "min_ms": 1493.215,
+      "max_ms": 2568.087,
+      "stdev_ms": 214.633
+    },
+    "with_index_forced": {
+      "n": 21,
+      "median_ms": 1661.308,
+      "mean_ms": 1684.66,
+      "min_ms": 1579.858,
+      "max_ms": 1888.226,
+      "stdev_ms": 81.521
+    }
+  },
+  "improvement_vs_no_index": {
+    "with_index": {
+      "absolute_ms": 15.041,
+      "percent": 0.84
+    },
+    "with_index_forced": {
+      "absolute_ms": 139.624,
+      "percent": 7.75
+    }
+  },
+  "all_arms_return_identical_rows": {
+    "without_index": true,
+    "with_index": true,
+    "with_index_forced": true
+  },
+  "explain": {
+    "without_index": {
+      "query_block": {
+        "select_id": 1,
+        "cost_info": {
+          "query_cost": "45442.31"
+        },
+        "ordering_operation": {
+          "using_temporary_table": true,
+          "using_filesort": true,
+          "grouping_operation": {
+            "using_filesort": false,
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "s",
+                  "access_type": "index",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_scheme_group"
+                  ],
+                  "key": "uq_scheme_group",
+                  "used_key_parts": [
+                    "scheme_name",
+                    "group_id"
+                  ],
+                  "key_length": "1026",
+                  "rows_examined_per_scan": 23,
+                  "rows_produced_per_join": 23,
+                  "filtered": "100.00",
+                  "using_index": true,
+                  "cost_info": {
+                    "read_cost": "1.00",
+                    "eval_cost": "2.30",
+                    "prefix_cost": "3.30",
+                    "data_read_per_join": "23K"
+                  },
+                  "used_columns": [
+                    "scheme_id",
+                    "scheme_name"
+                  ]
+                }
+              },
+              {
+                "table": {
+                  "table_name": "ss",
+                  "access_type": "ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "idx_sub_scheme_scheme"
+                  ],
+                  "key": "idx_sub_scheme_scheme",
+                  "used_key_parts": [
+                    "scheme_id"
+                  ],
+                  "key_length": "4",
+                  "ref": [
+                    "budgetiq.s.scheme_id"
+                  ],
+                  "rows_examined_per_scan": 4385,
+                  "rows_produced_per_join": 100857,
+                  "filtered": "100.00",
+                  "using_index": true,
+                  "cost_info": {
+                    "read_cost": "30.34",
+                    "eval_cost": "10085.72",
+                    "prefix_cost": "10119.36",
+                    "data_read_per_join": "100M"
+                  },
+                  "used_columns": [
+                    "sub_scheme_id",
+                    "scheme_id"
+                  ]
+                }
+              },
+              {
+                "table": {
+                  "table_name": "b",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "uq_budget_sub_year",
+                    "idx_budget_sub_scheme",
+                    "idx_budget_fiscal_year"
+                  ],
+                  "key": "uq_budget_sub_year",
+                  "used_key_parts": [
+                    "sub_scheme_id",
+                    "fiscal_year_id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "budgetiq.ss.sub_scheme_id",
+                    "const"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 100857,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "25237.23",
+                    "eval_cost": "10085.72",
+                    "prefix_cost": "45442.31",
+                    "data_read_per_join": "3M"
+                  },
+                  "used_columns": [
+                    "budget_id",
+                    "sub_scheme_id",
+                    "fiscal_year_id",
+                    "budget"
+                  ],
+                  "attached_condition": "(`budgetiq`.`b`.`fiscal_year_id` = (/* select#2 */ select max(`budgetiq`.`fiscal_years`.`fiscal_year_id`) from `budgetiq`.`fiscal_years`))",
+                  "attached_subqueries": [
+                    {
+                      "dependent": false,
+                      "cacheable": true,
+                      "query_block": {
+                        "select_id": 2,
+                        "message": "Select tables optimized away"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "with_index": {
+      "query_block": {
+        "select_id": 1,
+        "cost_info": {
+          "query_cost": "58001.13"
+        },
+        "ordering_operation": {
+          "using_temporary_table": true,
+          "using_filesort": true,
+          "grouping_operation": {
+            "using_filesort": false,
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "s",
+                  "access_type": "index",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_scheme_group"
+                  ],
+                  "key": "uq_scheme_group",
+                  "used_key_parts": [
+                    "scheme_name",
+                    "group_id"
+                  ],
+                  "key_length": "1026",
+                  "rows_examined_per_scan": 23,
+                  "rows_produced_per_join": 23,
+                  "filtered": "100.00",
+                  "using_index": true,
+                  "cost_info": {
+                    "read_cost": "1.00",
+                    "eval_cost": "2.30",
+                    "prefix_cost": "3.30",
+                    "data_read_per_join": "23K"
+                  },
+                  "used_columns": [
+                    "scheme_id",
+                    "scheme_name"
+                  ]
+                }
+              },
+              {
+                "table": {
+                  "table_name": "ss",
+                  "access_type": "ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "idx_sub_scheme_scheme"
+                  ],
+                  "key": "idx_sub_scheme_scheme",
+                  "used_key_parts": [
+                    "scheme_id"
+                  ],
+                  "key_length": "4",
+                  "ref": [
+                    "budgetiq.s.scheme_id"
+                  ],
+                  "rows_examined_per_scan": 4385,
+                  "rows_produced_per_join": 100857,
+                  "filtered": "100.00",
+                  "using_index": true,
+                  "cost_info": {
+                    "read_cost": "46.98",
+                    "eval_cost": "10085.72",
+                    "prefix_cost": "10136.00",
+                    "data_read_per_join": "100M"
+                  },
+                  "used_columns": [
+                    "sub_scheme_id",
+                    "scheme_id"
+                  ]
+                }
+              },
+              {
+                "table": {
+                  "table_name": "b",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "uq_budget_sub_year",
+                    "idx_budget_sub_scheme",
+                    "idx_budget_fiscal_year",
+                    "idx_budget_fy_sub_budget"
+                  ],
+                  "key": "uq_budget_sub_year",
+                  "used_key_parts": [
+                    "sub_scheme_id",
+                    "fiscal_year_id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "budgetiq.ss.sub_scheme_id",
+                    "const"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 100857,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "37779.41",
+                    "eval_cost": "10085.72",
+                    "prefix_cost": "58001.13",
+                    "data_read_per_join": "3M"
+                  },
+                  "used_columns": [
+                    "budget_id",
+                    "sub_scheme_id",
+                    "fiscal_year_id",
+                    "budget"
+                  ],
+                  "attached_condition": "(`budgetiq`.`b`.`fiscal_year_id` = (/* select#2 */ select max(`budgetiq`.`fiscal_years`.`fiscal_year_id`) from `budgetiq`.`fiscal_years`))",
+                  "attached_subqueries": [
+                    {
+                      "dependent": false,
+                      "cacheable": true,
+                      "query_block": {
+                        "select_id": 2,
+                        "message": "Select tables optimized away"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "with_index_forced": {
+      "query_block": {
+        "select_id": 1,
+        "cost_info": {
+          "query_cost": "121062.27"
+        },
+        "ordering_operation": {
+          "using_temporary_table": true,
+          "using_filesort": true,
+          "grouping_operation": {
+            "using_filesort": false,
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "s",
+                  "access_type": "index",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "uq_scheme_group"
+                  ],
+                  "key": "uq_scheme_group",
+                  "used_key_parts": [
+                    "scheme_name",
+                    "group_id"
+                  ],
+                  "key_length": "1026",
+                  "rows_examined_per_scan": 23,
+                  "rows_produced_per_join": 23,
+                  "filtered": "100.00",
+                  "using_index": true,
+                  "cost_info": {
+                    "read_cost": "1.00",
+                    "eval_cost": "2.30",
+                    "prefix_cost": "3.30",
+                    "data_read_per_join": "23K"
+                  },
+                  "used_columns": [
+                    "scheme_id",
+                    "scheme_name"
+                  ]
+                }
+              },
+              {
+                "table": {
+                  "table_name": "ss",
+                  "access_type": "ref",
+                  "possible_keys": [
+                    "PRIMARY",
+                    "idx_sub_scheme_scheme"
+                  ],
+                  "key": "idx_sub_scheme_scheme",
+                  "used_key_parts": [
+                    "scheme_id"
+                  ],
+                  "key_length": "4",
+                  "ref": [
+                    "budgetiq.s.scheme_id"
+                  ],
+                  "rows_examined_per_scan": 4385,
+                  "rows_produced_per_join": 100857,
+                  "filtered": "100.00",
+                  "using_index": true,
+                  "cost_info": {
+                    "read_cost": "30.34",
+                    "eval_cost": "10085.72",
+                    "prefix_cost": "10119.36",
+                    "data_read_per_join": "100M"
+                  },
+                  "used_columns": [
+                    "sub_scheme_id",
+                    "scheme_id"
+                  ]
+                }
+              },
+              {
+                "table": {
+                  "table_name": "b",
+                  "access_type": "ref",
+                  "possible_keys": [
+                    "idx_budget_fy_sub_budget"
+                  ],
+                  "key": "idx_budget_fy_sub_budget",
+                  "used_key_parts": [
+                    "fiscal_year_id",
+                    "sub_scheme_id"
+                  ],
+                  "key_length": "8",
+                  "ref": [
+                    "const",
+                    "budgetiq.ss.sub_scheme_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 100857,
+                  "filtered": "100.00",
+                  "using_index": true,
+                  "cost_info": {
+                    "read_cost": "100857.19",
+                    "eval_cost": "10085.72",
+                    "prefix_cost": "121062.27",
+                    "data_read_per_join": "3M"
+                  },
+                  "used_columns": [
+                    "budget_id",
+                    "sub_scheme_id",
+                    "fiscal_year_id",
+                    "budget"
+                  ],
+                  "attached_condition": "(`budgetiq`.`b`.`fiscal_year_id` = (/* select#2 */ select max(`budgetiq`.`fiscal_years`.`fiscal_year_id`) from `budgetiq`.`fiscal_years`))",
+                  "attached_subqueries": [
+                    {
+                      "dependent": false,
+                      "cacheable": true,
+                      "query_block": {
+                        "select_id": 2,
+                        "message": "Select tables optimized away"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "raw_samples_ms": {
+    "without_index": [
+      1633.435700001428,
+      1800.932499987539,
+      1779.4863000162877,
+      1887.7172000065912,
+      2033.1752999918535,
+      1956.669500010321,
+      1941.7825000127777,
+      1951.217199995881,
+      1697.7016999735497,
+      1781.204600003548,
+      1723.7520999915432,
+      1811.9557999889366,
+      1739.2698999901768,
+      1806.6695999877993,
+      2224.019799992675,
+      1940.9172000014223,
+      1837.1733999811113,
+      1763.0934999906458,
+      1788.3769999898504,
+      1721.9940999930259,
+      1794.5153999899048
+    ],
+    "with_index": [
+      2202.909100014949,
+      1745.4933999979403,
+      1796.6215999913402,
+      1493.2149999949615,
+      1624.4392999797128,
+      1806.3062999863178,
+      1878.2591000199318,
+      2568.087099993136,
+      1984.144499991089,
+      1868.5742000234313,
+      1845.922700013034,
+      1793.1718000036199,
+      1745.2612000051886,
+      1729.3956999783404,
+      1765.091899986146,
+      1772.9401999968104,
+      1744.6239000128116,
+      1785.8909999777097,
+      1781.3172999885865,
+      1743.4697000135202,
+      1817.6709999970626
+    ],
+    "with_index_forced": [
+      1579.8579000111204,
+      1661.3075000059325,
+      1623.3034000033513,
+      1641.3000000175089,
+      1617.1207000152208,
+      1642.6737000001594,
+      1657.410899992101,
+      1697.3603999940678,
+      1705.1687999919523,
+      1665.4358999803662,
+      1700.935600005323,
+      1661.1164000059944,
+      1585.931099980371,
+      1604.0755000140052,
+      1651.0036000108812,
+      1672.749500023201,
+      1888.2255000062287,
+      1702.3563999973703,
+      1801.590799994301,
+      1846.9443999929354,
+      1771.9923999975435
+    ]
+  }
+}
