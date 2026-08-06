@@ -123,6 +123,44 @@ Full method, all raw samples, and the `EXPLAIN FORMAT=JSON` for every arm are in
 > That index had never existed in the schema and no script in the repository
 > recorded a measurement. The figures above replace it.
 
+### What actually helped: buffer pool sizing — 33.8%
+
+If the schema was not the constraint, the next question was what is. The server
+was running `innodb_buffer_pool_size` at its **128 MB default** against a 90 MB
+table.
+
+| Buffer pool | Median | n |
+|---|---|---|
+| 128 MB (default) | 1783.5 ms | 21 |
+| 1024 MB | **1200.7 ms** | 21 |
+
+**582.8 ms — 32.7%.** Four times what the covering index achieves even when
+forced, from a configuration line rather than a schema change. Arms are
+interleaved rather than run in blocks, so a warming trend cannot masquerade as
+the result.
+
+This is **not** an I/O effect: both arms report a 100.000% buffer pool hit rate
+with zero disk reads. The 128 MB pool already holds the working set.
+
+The mechanism is the **adaptive hash index**, which is sized as a fraction of the
+buffer pool. Toggling it turns the effect on and off:
+
+| | 128 MB | 1024 MB | pool effect |
+|---|---|---|---|
+| AHI on (default) | 1783.5 ms | **1200.7 ms** | **+32.7%** |
+| AHI off | 1663.5 ms | 1688.0 ms | −1.5% |
+
+With the AHI disabled, pool size stops mattering entirely. And at 128 MB the AHI
+is *actively harmful* — **7.2% slower** than turning it off — because it cannot
+cover the working set and pays maintenance without collecting the benefit. At
+1 GB that same feature is worth 28.9%. So the fix is not "cache more data"; the
+data was already fully cached. It is giving the adaptive hash index enough room
+to be worth its upkeep.
+
+```bash
+python scripts/benchmark_buffer_pool.py --rounds 4 --repeats 7
+```
+
 ### Not currently measured
 
 Two previously published figures — ETL throughput (~400 → ~20,800 rows/sec) and

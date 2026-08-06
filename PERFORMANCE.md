@@ -133,6 +133,87 @@ the ordering is inverted, which is the useful observation: on this schema and
 data distribution the cost model mis-ranks the available plans. That, rather
 than the 7.8%, is the interesting result.
 
+## If not the schema, then what?
+
+Two follow-ups, because "the index does nothing" is a finding but not an answer.
+
+### Rewriting the query does not help
+
+The plan's cost is the ~92,000 `eq_ref` probes into `budget_data`, so the
+obvious move is to aggregate `budget_data` down to one row per scheme *before*
+joining to `schemes`, leaving the outer join 23 rows to name instead of 92,240
+to walk. Measured against a derived-table rewrite, and again with the fiscal
+year passed as a literal instead of a `MAX()` subquery:
+
+| Variant | Median |
+|---|---|
+| Baseline | 1962.7 ms |
+| Derived-table aggregation | 1777.2 ms |
+| Derived table + literal fiscal year | 1705.4 ms |
+
+The optimizer produces the same plan shape regardless — it still scans all
+92,087 `sub_schemes` rows and probes `budget_data` by unique key. The query text
+is not the constraint.
+
+### The server configuration is worth 33.8%
+
+`innodb_buffer_pool_size` was at the **128 MB default** against a 90 MB table.
+Measured by `scripts/benchmark_buffer_pool.py`, results in
+`results/buffer_pool_benchmark.json`:
+
+| Buffer pool | Median | Std dev | n |
+|---|---|---|---|
+| 128 MB (default) | 1783.5 ms | 139.4 | 21 |
+| 1024 MB | **1200.7 ms** | 40.2 | 21 |
+
+**582.8 ms faster — 32.7%.** That is four times what the covering index achieves
+even when forced, and it is a configuration line rather than a schema change.
+
+The arms are **interleaved** (128, 1024, 128, 1024 …) rather than run in blocks.
+An earlier version of this experiment walked the sizes upward and could not
+distinguish the improvement from caches warming; interleaved, the effect tracks
+the size and not the order, and it reproduced in every round.
+
+### It is not disk I/O — it is the adaptive hash index
+
+Both arms report a **100.000% buffer pool hit rate with zero disk page reads**,
+in every round. The 128 MB pool already holds the working set, so the 583 ms is
+not pages being fetched from disk.
+
+Two hypotheses were tested. The first — buffer pool instance contention — is
+wrong: `innodb_buffer_pool_instances` is fixed at startup and stayed at **1** at
+every size, so the count never changed.
+
+The second is correct. InnoDB's adaptive hash index is sized as a fraction of
+the buffer pool, and this query issues ~92,000 `eq_ref` probes per execution,
+which is precisely the access pattern the AHI exists to short-circuit. Toggling
+it turns the pool-size effect on and off:
+
+A full 2×2, 21 samples per cell, interleaved, all at a 100% hit rate:
+
+| | 128 MB | 1024 MB | pool effect |
+|---|---|---|---|
+| **AHI on** (default) | 1783.5 ms | **1200.7 ms** | **+32.7%** |
+| **AHI off** | 1663.5 ms | 1688.0 ms | −1.5% |
+
+**With the AHI disabled, buffer pool size stops mattering.** The entire effect
+is mediated by it.
+
+The sharper observation is in the bottom-left cell: at 128 MB the AHI is
+**actively harmful** — 1783.5 ms with it on versus 1663.5 ms with it off, so the
+default configuration is **7.2% slower** than simply disabling the feature. At
+1 GB the same feature is worth **28.9%**.
+
+The AHI is not a free optimisation. It is a hash index over frequently accessed
+B-tree pages, and it has to be built and maintained. Sized from a 128 MB pool it
+cannot cover a 90 MB table plus 92,240 `sub_schemes` rows, so it thrashes: the
+maintenance cost is paid and the lookup benefit is not collected. Given enough
+pool to cover the working set, it pays for itself several times over.
+
+So "raise the buffer pool" is the fix, but not for the reason one would assume.
+It is not about caching more data — the data was already fully cached. It is
+about giving the adaptive hash index enough room to be worth its own upkeep.
+
 ## Conclusion
 
 The index is not worth adding on this evidence.
@@ -146,9 +227,32 @@ been removed from the README rather than restated at a lower figure. Adding an
 index that the optimizer declines to use, and quoting a number that only appears
 under `FORCE INDEX`, would repeat the original problem in a quieter voice.
 
-If this query ever became load-bearing, the honest next step is not the covering
-index — it is to look at why the plan iterates 92,240 `sub_schemes` rows to
-return 10 grouped values.
+**The available win was in the server, not the schema.** Sizing the buffer pool
+is worth 33.8%; the index the documentation celebrated is worth 0.8%. Nothing in
+this repository had ever looked at server configuration, and every published
+figure concerned an index that did not exist.
+
+### Recommended change
+
+Set the buffer pool explicitly rather than inheriting the 128 MB default. On a
+machine with 16 GB of RAM, 1–2 GB is unremarkable:
+
+```ini
+# my.ini / my.cnf, under [mysqld]
+innodb_buffer_pool_size = 1G
+```
+
+This is a server setting, not a repository change, so it is a recommendation
+here rather than a commit. `scripts/benchmark_buffer_pool.py` changes the value
+dynamically for the duration of a run and restores it on exit, including on
+error — it never writes to `my.ini`.
+
+### Still unmeasured
+
+The dashboard reads through `v_scheme_summary` and `v_fiscal_year_totals` and
+filters `fiscal_year` as a string. **No figure on this page describes a query the
+application actually issues.** Profiling the view path is the next thing worth
+doing, and it may well relocate the bottleneck again.
 
 ## Reproducing
 
@@ -156,7 +260,12 @@ return 10 grouped values.
 python scripts/benchmark_index.py --trials 3 --repeats 7
 ```
 
-Writes `results/index_benchmark.json` containing every individual sample, the
-full `EXPLAIN FORMAT=JSON` for all three arms, and the environment the run was
-taken in. Different hardware will produce different latencies; replace the
-tables above from your own output rather than trusting these.
+```bash
+python scripts/benchmark_buffer_pool.py --rounds 4 --repeats 7
+```
+
+These write `results/index_benchmark.json` and
+`results/buffer_pool_benchmark.json`, containing every individual sample, the
+full `EXPLAIN FORMAT=JSON` for each arm, the hit rates, and the environment the
+run was taken in. Different hardware will produce different latencies; replace
+the tables above from your own output rather than trusting these.

@@ -1,0 +1,172 @@
+{
+  "environment": {
+    "timestamp_utc": "2026-08-06T20:54:42+00:00",
+    "mysql_version": "8.0.43",
+    "os": "Windows 10",
+    "cpu_count": 12,
+    "innodb_buffer_pool_instances": 1,
+    "innodb_buffer_pool_chunk_size_mb": 128,
+    "configured_pool_mb": 128
+  },
+  "method": "Arms interleaved per round rather than run in blocks, so a warming trend affects both arms equally. Buffer pool restored on exit.",
+  "query": "SELECT s.scheme_name, SUM(b.budget) AS total_budget\n    FROM budget_data b\n    JOIN sub_schemes ss ON b.sub_scheme_id = ss.sub_scheme_id\n    JOIN schemes s ON ss.scheme_id = s.scheme_id\n    WHERE b.fiscal_year_id = (SELECT MAX(fiscal_year_id) FROM fiscal_years)\n    GROUP BY s.scheme_name\n    ORDER BY total_budget DESC\n    LIMIT 10",
+  "rounds": 3,
+  "repeats_per_arm_per_round": 7,
+  "grid": {
+    "pool_128mb_ahi_on": {
+      "n": 21,
+      "median_ms": 1783.49,
+      "mean_ms": 1836.91,
+      "min_ms": 1635.19,
+      "max_ms": 2221.18,
+      "stdev_ms": 139.44,
+      "hit_rate_percent": [
+        100.0,
+        100.0,
+        100.0
+      ]
+    },
+    "pool_1024mb_ahi_on": {
+      "n": 21,
+      "median_ms": 1200.66,
+      "mean_ms": 1203.62,
+      "min_ms": 1100.98,
+      "max_ms": 1331.32,
+      "stdev_ms": 40.25,
+      "hit_rate_percent": [
+        100.0,
+        100.0,
+        100.0
+      ]
+    },
+    "pool_128mb_ahi_off": {
+      "n": 21,
+      "median_ms": 1663.46,
+      "mean_ms": 1638.98,
+      "min_ms": 1359.54,
+      "max_ms": 1770.68,
+      "stdev_ms": 94.85,
+      "hit_rate_percent": [
+        100.0,
+        100.0,
+        100.0
+      ]
+    },
+    "pool_1024mb_ahi_off": {
+      "n": 21,
+      "median_ms": 1687.99,
+      "mean_ms": 1677.06,
+      "min_ms": 1459.99,
+      "max_ms": 1775.89,
+      "stdev_ms": 70.16,
+      "hit_rate_percent": [
+        100.0,
+        100.0,
+        100.0
+      ]
+    }
+  },
+  "pool_effect_with_ahi_on": {
+    "absolute_ms": 582.83,
+    "percent": 32.68
+  },
+  "pool_effect_with_ahi_off": {
+    "absolute_ms": -24.53,
+    "percent": -1.47
+  },
+  "conclusion": "The buffer pool size effect is mediated entirely by the adaptive hash index. With the AHI disabled, pool size makes no material difference. The AHI is sized as a fraction of the buffer pool, so at the smaller pool it is too small to cover the working set and its maintenance cost exceeds its benefit.",
+  "raw_samples_ms": {
+    "pool_128mb_ahi_on": [
+      1927.8195000078995,
+      1771.677799988538,
+      1780.747100012377,
+      1783.48530002404,
+      1767.9308999795467,
+      1815.6120000057854,
+      1726.5839999890886,
+      1946.8355000135489,
+      1768.150499992771,
+      2221.1765999963973,
+      2131.623399996897,
+      1932.6450999942608,
+      1733.4982000174932,
+      1921.9687999866437,
+      1875.738500006264,
+      1759.7555000102147,
+      1822.2368000133429,
+      1798.7987000087742,
+      1742.9363999981433,
+      1635.194699978456,
+      1710.782799986191
+    ],
+    "pool_1024mb_ahi_on": [
+      1331.3249000057112,
+      1100.9782000037376,
+      1193.5472000041045,
+      1225.3171000047587,
+      1232.9029000247829,
+      1203.3025000127964,
+      1199.3566999735776,
+      1222.080299980007,
+      1200.6598000007216,
+      1226.508299994748,
+      1167.9034999979194,
+      1205.2064000163227,
+      1166.671300015878,
+      1200.403599999845,
+      1192.5601999973878,
+      1196.0567000205629,
+      1206.0546000138856,
+      1193.601100007072,
+      1192.021399998339,
+      1216.406100022141,
+      1203.211400017608
+    ],
+    "pool_128mb_ahi_off": [
+      1677.4636000045575,
+      1599.9082999769598,
+      1562.5206000113394,
+      1629.6217999770306,
+      1531.473899987759,
+      1583.6986000067554,
+      1563.20920001599,
+      1594.6617999870796,
+      1600.1736000180244,
+      1756.4110000093933,
+      1770.6833999836817,
+      1735.2407999860588,
+      1713.812300004065,
+      1767.4702999938745,
+      1667.32960002264,
+      1359.540300007211,
+      1665.283999987878,
+      1614.6769000042696,
+      1663.4575000207406,
+      1667.6618000201415,
+      1694.3629999877885
+    ],
+    "pool_1024mb_ahi_off": [
+      1687.4572999950033,
+      1663.2887000159826,
+      1713.5282999952324,
+      1666.1930999835022,
+      1554.6861000184435,
+      1652.9354999947827,
+      1649.884699989343,
+      1682.6559999899473,
+      1702.474899997469,
+      1459.9850999948103,
+      1612.8890000109095,
+      1656.3537000038195,
+      1700.7169999997132,
+      1687.9853999998886,
+      1708.8066000142135,
+      1690.541799995117,
+      1715.7353999791667,
+      1726.8780999875162,
+      1768.7854999967385,
+      1775.8912999997847,
+      1740.4842999821994
+    ]
+  }
+}

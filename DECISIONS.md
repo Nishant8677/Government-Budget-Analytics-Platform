@@ -74,6 +74,41 @@ optimisation would have been: it identifies the real bottleneck (the 92,240-row
 `sub_schemes` walk) and documents a case where the optimizer's cost model is
 inverted. Both are reproducible by running one script.
 
+## ADR 4b: Server configuration beat schema tuning
+**Context:** With the covering index measured at 0.8% (ADR 4), the question
+became what actually constrains the query. Two candidates: the query text, and
+the server configuration nobody had examined.
+**Alternatives:** Rewrite the query to aggregate `budget_data` before joining;
+size the InnoDB buffer pool; accept the latency.
+**Decision:** **Recommend sizing the buffer pool. The query rewrite is not
+worth adopting.**
+
+**Consequences & Trade-offs:** The rewrite — aggregating to one row per scheme
+in a derived table, so the outer join names 23 rows instead of walking 92,240 —
+produced 1962 ms → 1705 ms, and `EXPLAIN` shows the optimizer collapses it back
+to the same plan shape. Not worth the loss of readability.
+
+`innodb_buffer_pool_size` was at its 128 MB default against a 90 MB table.
+Raising it to 1 GB is worth **32.7%** (1783.5 ms → 1200.7 ms, n=21 per cell,
+arms interleaved). That is four times what the covering index achieves when
+forced, from a configuration line rather than a schema change.
+
+The mechanism is not caching. Every cell runs at a **100% buffer pool hit rate
+with zero disk reads** — the data was already resident. The effect is entirely
+mediated by the adaptive hash index, which is sized as a fraction of the buffer
+pool: with the AHI disabled, pool size makes no difference (−1.5%). At 128 MB
+the AHI is *actively harmful*, 7.2% slower than turning it off, because it
+cannot cover the working set and pays maintenance without collecting the
+benefit; at 1 GB the same feature is worth 28.9%.
+
+This is a recommendation rather than a commit, because it is a server setting
+and not a property of this repository. `scripts/benchmark_buffer_pool.py`
+changes it dynamically for the duration of a run and restores it on exit.
+
+**The transferable lesson:** the project's documentation described six
+schema-level decisions in detail and never mentioned server configuration. The
+largest available win was in the part nobody had written down.
+
 ## ADR 5: Isolation Level (REPEATABLE READ)
 **Context:** When the Streamlit dashboard queries the database while an ETL pipeline is actively inserting 1M rows, what should the dashboard see?
 **Alternatives:** READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE.
