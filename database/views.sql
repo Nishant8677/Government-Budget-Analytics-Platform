@@ -59,16 +59,26 @@ GROUP BY    s.scheme_name, g.group_name, fy.fiscal_year;
 
 -- ── v_fiscal_year_totals ──────────────────────────────────────────────────────
 -- Grand totals per fiscal year across all schemes.
--- Used for the KPI cards and the national budget trend line.
+-- Used for the KPI cards and the national budget trend line, so this runs on
+-- every dashboard page load and cannot be narrowed by a filter -- it is grand
+-- totals by definition. It is the most expensive query the application issues.
+--
+-- It does NOT join sub_schemes. An earlier version did, solely to compute
+-- COUNT(DISTINCT ss.sub_scheme_id) -- but sub_scheme_id is already a column on
+-- budget_data, so the join fetched 92,240 rows to read a value it had in hand.
+-- Removing it is provably safe rather than a judgement call: the join was an
+-- INNER JOIN on a NOT NULL foreign key with ON DELETE RESTRICT, so it could
+-- neither filter rows nor duplicate them. Measured at 921,696 rows the removal
+-- is worth 3,451 ms (9,762 ms -> 6,311 ms, 35.4%) and returns identical rows.
+-- See PERFORMANCE.md and results/dashboard_benchmark.json.
 CREATE OR REPLACE VIEW v_fiscal_year_totals AS
 SELECT
     fy.fiscal_year,
     ROUND(SUM(bd.actuals),  2) AS total_actuals,
     ROUND(SUM(bd.budget),   2) AS total_budget,
     ROUND(SUM(bd.revised),  2) AS total_revised,
-    COUNT(DISTINCT ss.sub_scheme_id) AS line_items
+    COUNT(DISTINCT bd.sub_scheme_id) AS line_items
 FROM        budget_data   bd
-JOIN        sub_schemes   ss ON bd.sub_scheme_id  = ss.sub_scheme_id
 JOIN        fiscal_years  fy ON bd.fiscal_year_id  = fy.fiscal_year_id
 GROUP BY    fy.fiscal_year
 ORDER BY    fy.fiscal_year;

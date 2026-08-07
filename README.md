@@ -161,6 +161,45 @@ to be worth its upkeep.
 python scripts/benchmark_buffer_pool.py --rounds 4 --repeats 7
 ```
 
+### The dashboard itself: 3 min 37 s → 30 s
+
+Everything above measures `Q2` from `scripts/benchmark.py`. Profiling what
+`app/dashboard.py` actually issues found the real bottleneck somewhere else
+entirely — and it is not an indexing problem.
+
+| Loader | Before | After |
+|---|---|---|
+| `load_scheme_summary("All Years")` | 205,039 ms | **23,039 ms** |
+| `load_fiscal_year_totals` | 11,144 ms | **6,915 ms** |
+| `insights: highest growth` | 873 ms | **2.4 ms** |
+| all 8 other queries | 0.3–3.4 ms | unchanged |
+| **Page load** | **217,076 ms** | **29,971 ms** |
+
+Two queries were 99.5% of the page load. Three changes, each verified to return
+byte-identical rows before being applied, cut it **7.2×**.
+
+The mechanism is **predicate pushdown**, not indexes. `v_scheme_summary` costs
+1.3 ms filtered to one fiscal year and 205,039 ms unfiltered — same view. MySQL 8
+pushes a single equality into a `GROUP BY` view but not a disjunction, which is
+why one insight query using `IN (...)` cost 873 ms while four siblings using `=`
+cost 2–3 ms. Splitting it into a `UNION ALL` of two equality filters made it
+**369× faster**.
+
+`v_fiscal_year_totals` separately joined `sub_schemes` just to count a column
+`budget_data` already had.
+
+```bash
+python scripts/benchmark_dashboard.py --repeats 3
+```
+
+> **A caveat that matters more than the numbers.** The synthetic generator
+> backdates its rows to 2000–2010 while the real data sits in 2020–2023, so the
+> table holds two disjoint datasets: **166 real rows** and 921,530 synthetic
+> ones. The dashboard selects fiscal years by name and shows the real ones;
+> `Q2` filters `MAX(fiscal_year_id)`, a synthetic year. On the real data the
+> dashboard is genuinely fast. The figures above are what happens at the
+> advertised 1M-row scale.
+
 ### Not currently measured
 
 Two previously published figures — ETL throughput (~400 → ~20,800 rows/sec) and

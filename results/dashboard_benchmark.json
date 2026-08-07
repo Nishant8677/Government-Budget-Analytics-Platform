@@ -1,0 +1,116 @@
+{
+  "environment": {
+    "timestamp_utc": "2026-08-07T19:53:47+00:00",
+    "mysql_version": "8.0.43",
+    "os": "Windows 10",
+    "rows_per_fiscal_year": {
+      "2022-2023": 39,
+      "2021-2022": 41,
+      "2020-2021": 86,
+      "2000-2001": 92153,
+      "2001-2002": 92153,
+      "2002-2003": 92153,
+      "2003-2004": 92153,
+      "2004-2005": 92153,
+      "2005-2006": 92153,
+      "2006-2007": 92153,
+      "2007-2008": 92153,
+      "2008-2009": 92153,
+      "2009-2010": 92153
+    },
+    "real_data_rows_total": 166,
+    "note": "Fiscal years with fewer than 1,000 rows are the real dataset (2020-2021 onward). The rest are backdated synthetic years created by scripts/generate_synthetic_data.py. The dashboard selects years by name and the real years are what it shows."
+  },
+  "repeats": 3,
+  "queries": {
+    "load_fiscal_years": {
+      "median_ms": 0.4,
+      "min_ms": 0.35,
+      "max_ms": 0.46,
+      "n": 3,
+      "rows_returned": 13,
+      "sql": "SELECT fiscal_year FROM fiscal_years ORDER BY fiscal_year"
+    },
+    "load_schemes": {
+      "median_ms": 0.3,
+      "min_ms": 0.25,
+      "max_ms": 0.59,
+      "n": 3,
+      "rows_returned": 23,
+      "sql": "SELECT scheme_name FROM schemes ORDER BY scheme_name"
+    },
+    "load_fiscal_year_totals": {
+      "median_ms": 6915.12,
+      "min_ms": 6823.33,
+      "max_ms": 7024.8,
+      "n": 3,
+      "rows_returned": 13,
+      "sql": "SELECT * FROM v_fiscal_year_totals ORDER BY fiscal_year"
+    },
+    "load_scheme_summary(2021-2022)": {
+      "median_ms": 2.89,
+      "min_ms": 2.87,
+      "max_ms": 3.21,
+      "n": 3,
+      "rows_returned": 18,
+      "sql": "SELECT * FROM v_scheme_summary WHERE fiscal_year = '2021-2022' ORDER BY total_actuals DESC"
+    },
+    "load_scheme_summary(All Years)": {
+      "median_ms": 23039.0,
+      "min_ms": 22912.68,
+      "max_ms": 23121.89,
+      "n": 3,
+      "rows_returned": 23,
+      "sql": "SELECT s.scheme_name, g.group_name, ROUND(SUM(bd.actuals),2) AS total_actuals, ROUND(SUM(bd.budget),2) AS total_budget, ROUND(SUM(bd.revised),2) AS total_revised FROM budget_data bd JOIN sub_schemes ss ON bd.sub_scheme_id=ss.sub_scheme_id JOIN schemes s ON ss.scheme_id=s.scheme_id JOIN `groups` g ON s.group_id=g.group_id GROUP BY s.scheme_name, g.group_name ORDER BY total_actuals DESC"
+    },
+    "insights: top scheme": {
+      "median_ms": 3.37,
+      "min_ms": 1.49,
+      "max_ms": 3.58,
+      "n": 3,
+      "rows_returned": 1,
+      "sql": "SELECT scheme_name, ROUND(SUM(total_actuals),2) AS total_actuals FROM v_scheme_summary WHERE fiscal_year='2020-2021' GROUP BY scheme_name ORDER BY total_actuals DESC LIMIT 1"
+    },
+    "insights: highest growth": {
+      "median_ms": 2.37,
+      "min_ms": 2.09,
+      "max_ms": 6.26,
+      "n": 3,
+      "rows_returned": 1,
+      "sql": "SELECT scheme_name, MAX(CASE WHEN fiscal_year='2021-2022' THEN total_budget END) AS b21, MAX(CASE WHEN fiscal_year='2022-2023' THEN total_budget END) AS b22 FROM ( SELECT * FROM v_scheme_summary WHERE fiscal_year='2021-2022' UNION ALL SELECT * FROM v_scheme_summary WHERE fiscal_year='2022-2023' ) y GROUP BY scheme_name HAVING b21>0 AND b22>0 ORDER BY (b22-b21)/b21 DESC LIMIT 1"
+    },
+    "insights: largest revision": {
+      "median_ms": 1.39,
+      "min_ms": 1.21,
+      "max_ms": 3.26,
+      "n": 3,
+      "rows_returned": 1,
+      "sql": "SELECT scheme_name, ROUND(total_budget,2) AS budget, ROUND(total_revised,2) AS revised, ROUND(ABS(total_revised-total_budget),2) AS deviation FROM v_scheme_summary WHERE fiscal_year='2021-2022' AND total_budget>0 AND total_revised IS NOT NULL ORDER BY deviation DESC LIMIT 1"
+    },
+    "insights: avg utilisation": {
+      "median_ms": 1.57,
+      "min_ms": 1.22,
+      "max_ms": 2.84,
+      "n": 3,
+      "rows_returned": 1,
+      "sql": "SELECT ROUND(AVG((total_revised/total_budget)*100),2) AS avg_util FROM v_scheme_summary WHERE fiscal_year='2021-2022' AND total_budget>0 AND total_revised IS NOT NULL"
+    },
+    "insights: schemes over budget": {
+      "median_ms": 3.08,
+      "min_ms": 1.88,
+      "max_ms": 3.33,
+      "n": 3,
+      "rows_returned": 1,
+      "sql": "SELECT COUNT(*) AS over_count FROM v_scheme_summary WHERE fiscal_year='2021-2022' AND total_revised > total_budget"
+    },
+    "load_budget_overview(2021-2022)": {
+      "median_ms": 1.46,
+      "min_ms": 1.37,
+      "max_ms": 2.18,
+      "n": 3,
+      "rows_returned": 41,
+      "sql": "SELECT group_name, scheme_name, sub_scheme_name, major_head_code, fiscal_year, actuals, budget, revised, budget_utilization_pct FROM v_budget_overview WHERE fiscal_year = '2021-2022' ORDER BY group_name, scheme_name, sub_scheme_name, fiscal_year"
+    }
+  },
+  "page_load_sum_of_medians_ms": 29970.95
+}
