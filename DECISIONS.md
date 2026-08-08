@@ -19,8 +19,47 @@ This document records the major architectural decisions made during the engineer
 ## ADR 3: ETL Concurrency via Upserts
 **Context:** The ETL pipeline might be triggered multiple times, potentially concurrently.
 **Alternatives:** Truncate & Load, `SELECT` then `INSERT` (manual check), or `ON DUPLICATE KEY UPDATE` (Upsert).
-**Decision:** **Atomic Upserts**
-**Consequences & Trade-offs:** Using upserts delegates concurrency control and race-condition prevention directly to the InnoDB storage engine. If two ETL workers run simultaneously, InnoDB places row-level exclusive locks on the index, serializing the writes automatically. This prevents data corruption without requiring complex application-level distributed locks (e.g., Redis).
+**Decision:** **Atomic upserts, with a locking read-back**
+**Consequences & Trade-offs:** Upserts delegate write serialisation to InnoDB. If
+two ETL workers run simultaneously, row-level locks on the unique index serialise
+the inserts, so no duplicate reference rows are created and no application-level
+distributed lock (e.g. Redis) is needed.
+
+**An earlier version of this ADR stopped there, and that was wrong.** It claimed
+upserts delegate "race-condition prevention" to the storage engine. Serialising
+the *write* is not the whole operation: `_upsert_group` and its four siblings
+insert and then read the ID back, and it was the read that was unsafe.
+
+This ADR interacts with ADR 5. Under `REPEATABLE READ` a transaction's
+consistent-read snapshot is established at its first consistent read, and
+`INSERT IGNORE` is a locking write that does not establish it. So from the second
+record of a batch onward the snapshot is already fixed: a reference row committed
+by another worker after that point collides with the `INSERT IGNORE` while
+remaining invisible to the `SELECT`. `fetchone()` returns `None`, `None[0]`
+raises `TypeError`, and the load dies partway through.
+
+`scripts/test_upsert_race.py` reproduces this with a forced interleaving, using
+`READ COMMITTED` as the control so the isolation level is the only variable:
+
+| | REPEATABLE READ | READ COMMITTED |
+|---|---|---|
+| `INSERT IGNORE` warning | Duplicate entry | Duplicate entry |
+| plain `SELECT` saw row | **False** | True |
+| `_upsert_group` | **TypeError** | returned id |
+
+The two middle cells are the mechanism, one statement apart in one transaction:
+the write layer reports a duplicate key, so the row exists; the read layer
+returns nothing, because its snapshot predates the commit.
+
+The read-back is now `SELECT ... FOR SHARE` — a locking read, which sees the
+latest committed row instead of the snapshot. Both arms pass. The cost is a
+shared lock per reference row held until commit, which serialises workers
+touching the same group or scheme; at this cardinality that is cheap.
+
+**The transferable lesson:** two architecture decisions that are each defensible
+alone were unsafe in combination, and nothing in the repository connected them.
+The ADRs were written as independent entries and the interaction lived in the
+gap between ADR 3 and ADR 5.
 
 ## ADR 4: Covering Index — designed, measured, and rejected
 **Context:** At ~920k rows the grouped aggregation benchmark query (`Q2` in
@@ -115,6 +154,18 @@ largest available win was in the part nobody had written down.
 **Alternatives:** READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE.
 **Decision:** **REPEATABLE READ (MySQL Default)**
 **Consequences & Trade-offs:** By keeping the default, we utilize InnoDB's Multi-Version Concurrency Control (MVCC). The dashboard queries against a consistent snapshot of the data. It will not see "Dirty Reads" (partially loaded ETL data) nor will it experience "Non-Repeatable Reads" mid-query. The trade-off vs READ COMMITTED is a higher probability of gap locks during range updates, but our ETL pipeline strictly inserts unique hierarchical data, making gap-lock deadlocks virtually impossible.
+
+**This decision is not free on the write path, and the cost was found late.** The
+snapshot semantics that make the dashboard consistent are the same semantics that
+broke the ETL's reference-ID read-back — see ADR 3, where a concurrent loader
+could commit a row that the reading transaction could no longer see. The fix was
+a locking read in the loader rather than a different isolation level, because the
+dashboard is the reason `REPEATABLE READ` was chosen and it still benefits.
+
+Stated plainly: `REPEATABLE READ` is right for the reader and hostile to a
+read-after-write in the writer. Any code path that inserts and then reads its own
+or a peer's row back needs a locking read, `READ COMMITTED`, or a pattern that
+never reads back at all.
 
 ## ADR 6: Abstracting Complexity via SQL Views
 **Context:** Streamlit relies on `pandas.read_sql()` to fetch data for visualizations.
