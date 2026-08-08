@@ -51,6 +51,15 @@ from a client connection without `SUPER` or a server restart, so **both arms run
 warm**. The comparison between arms is valid; the absolute latencies are a best
 case.
 
+> **These row counts are what the benchmarks ran against, and they are no longer
+> current.** ADR 7 corrected the grain of `sub_schemes` afterwards, so the table
+> now holds 921,720 rows over 92,257 sub-schemes. The change is confined to the
+> real slice — 166 rows became 190, 87 sub-schemes became 104 — and touches
+> 0.003% of the table. Every figure on this page was measured before it, against
+> synthetic years it did not alter, so nothing here has been restated: the
+> numbers describe the run that produced them. Re-running any script will report
+> the new counts in its own environment block.
+>
 > A previous revision of this table gave `budget_data` as 90.2 MB. That figure
 > was typed in rather than captured, and a spot check returns a materially larger
 > one — with no schema change, and the same four indexes as `schema.sql`. InnoDB's

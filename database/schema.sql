@@ -65,15 +65,41 @@ CREATE TABLE IF NOT EXISTS `major_heads` (
 -- ── Core: Sub-Schemes ─────────────────────────────────────────────────────────
 -- A Sub-Scheme is the lowest level of the budget hierarchy.
 -- E.g., "Collections" under "Corporation Tax".
+--
+-- Identity is (sub_scheme_name, scheme_id, programme_name, sub_programme_name),
+-- and all four parts are load-bearing. An earlier version keyed on the first
+-- two, which silently merged distinct line items: under Customs > Import Duties
+-- the source carries nine separate levies -- Basic Duties, Social Welfare
+-- Surcharge, Health Cess, three education cesses and more -- that share a
+-- sub-scheme name and differ only in programme. major_head_code cannot
+-- separate them (all nine are code 37), and programme_name alone cannot either
+-- (two "Basic Duties" rows differ only by sub_programme_name). Measured on the
+-- real dataset: 91 distinct keys where there are 118 line items.
+--
+-- The two new columns are NOT NULL DEFAULT '' rather than nullable, and that is
+-- deliberate. MySQL's UNIQUE treats every NULL as distinct from every other
+-- NULL, so a nullable key part enforces nothing on the 20 and 30 rows where
+-- these are blank -- the constraint would permit exactly the duplicates it
+-- exists to prevent, and the table would grow on every ETL run. '' means "this
+-- line item has no programme breakdown", which is a structural fact rather than
+-- missing data.
+--
+-- VARCHAR(128) rather than 255 is a size limit, not a guess. Three VARCHAR(255)
+-- columns plus an INT is 3064 bytes against InnoDB's 3072-byte index limit --
+-- legal, but eight bytes of headroom is a tripwire. The longest real values are
+-- 54, 87 and 58 characters.
 CREATE TABLE IF NOT EXISTS `sub_schemes` (
-    sub_scheme_id   INT UNSIGNED    NOT NULL AUTO_INCREMENT,
-    sub_scheme_name VARCHAR(255)    NOT NULL,
-    scheme_id       INT UNSIGNED    NOT NULL,
-    major_head_id   INT UNSIGNED,           -- NULL if major head unknown
-    created_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sub_scheme_id      INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    sub_scheme_name    VARCHAR(255) NOT NULL,
+    scheme_id          INT UNSIGNED NOT NULL,
+    programme_name     VARCHAR(128) NOT NULL DEFAULT '',
+    sub_programme_name VARCHAR(128) NOT NULL DEFAULT '',
+    major_head_id      INT UNSIGNED,           -- NULL if major head unknown
+    created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (sub_scheme_id),
-    UNIQUE KEY  uq_sub_scheme_scheme  (sub_scheme_name, scheme_id),
+    UNIQUE KEY  uq_sub_scheme_identity
+                (sub_scheme_name, scheme_id, programme_name, sub_programme_name),
     INDEX       idx_sub_scheme_scheme (scheme_id),
     INDEX       idx_sub_scheme_head   (major_head_id),
 

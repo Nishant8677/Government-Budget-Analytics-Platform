@@ -312,10 +312,16 @@ def load_budget_overview(fiscal_year: str, scheme: str) -> pd.DataFrame:
         params.append(scheme)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     return _run_query(
-        f"""SELECT group_name, scheme_name, sub_scheme_name, major_head_code,
+        # programme_name is selected because it is part of a sub-scheme's
+        # identity: several levies share a sub-scheme name and are only
+        # distinguishable by it. Without it the table shows repeated rows with
+        # different figures and no way to tell them apart.
+        f"""SELECT group_name, scheme_name, sub_scheme_name, programme_name,
+                   sub_programme_name, major_head_code,
                    fiscal_year, actuals, budget, revised, budget_utilization_pct
             FROM   v_budget_overview {where}
-            ORDER BY group_name, scheme_name, sub_scheme_name, fiscal_year""",
+            ORDER BY group_name, scheme_name, sub_scheme_name,
+                     programme_name, fiscal_year""",
         tuple(params),
     )
 
@@ -752,12 +758,17 @@ with tab_ex:
     st.markdown('<div class="section-header">🔍 Interactive Data Explorer</div>', unsafe_allow_html=True)
     if not detail_df.empty:
         st.caption(f"**{len(detail_df):,}** records | FY: **{selected_fy}** | Scheme: **{selected_scheme}**")
-        search = st.text_input("🔎 Search", placeholder="sub-scheme or scheme name …")
+        # regex=False on the filters below: pandas defaults str.contains to
+        # regex, so a user typing "(" raised re.error and a pathological
+        # pattern was a ReDoS against the app process. This is a search box,
+        # not a regex console.
+        search = st.text_input("🔎 Search", placeholder="scheme, sub-scheme or programme …")
         disp = detail_df.copy()
         if search:
             mask = (
-                disp["sub_scheme_name"].str.contains(search, case=False, na=False)
-                | disp["scheme_name"].str.contains(search, case=False, na=False)
+                disp["sub_scheme_name"].str.contains(search, case=False, na=False, regex=False)
+                | disp["programme_name"].str.contains(search, case=False, na=False, regex=False)
+                | disp["scheme_name"].str.contains(search, case=False, na=False, regex=False)
             )
             disp = disp[mask]
         sort_col = st.selectbox("Sort by", ["actuals","budget","revised","budget_utilization_pct"])

@@ -78,25 +78,23 @@ Design decisions
    by scripts/generate_synthetic_data.py, which batches with executemany() and
    never imports this module.  PERFORMANCE.md documents the split.
 
-5. KNOWN BUG -- duplicate sub-scheme names silently overwrite each other:
-   35 of the 201 records collapse onto 8 keys that already exist, and
-   ON DUPLICATE KEY UPDATE means the last one wins.  They are not duplicates.
-   The source distinguishes them by "Programme Name", which transform() drops
-   as irrelevant: under Customs > Import Duties there are nine separate levies
-   -- Basic Duties, Social Welfare Surcharge, Health Cess, three education
-   cesses and more -- all sharing a sub-scheme name and all carrying Major Head
-   Code 37, so major_head_code cannot separate them either.
+5. FIXED -- sub-scheme identity is four columns, not two (ADR 7):
+   _upsert_sub_scheme keys on (sub_scheme_name, scheme_id, programme_name,
+   sub_programme_name).  Keying on the first two merged distinct line items:
+   under Customs > Import Duties the source carries nine separate levies that
+   share a sub-scheme name, so eight were overwritten by ON DUPLICATE KEY
+   UPDATE as the loader walked past -- 238,351.64 crore of actuals discarded.
 
-   Measured against the real CSV, the 8 conflicting keys hold 361,934.70 crore
-   of actuals and store 123,583.06 -- so **238,351.64 crore is silently
-   discarded**, and every scheme total the dashboard shows for those rows is
-   understated.
+   Both new columns are in the lookup as well as the insert.  Keying the insert
+   without keying the read would return an arbitrary sibling, which is a
+   quieter version of the same bug.
 
-   The fix is not in this module.  The grain of `sub_schemes` is one level too
-   coarse: identity needs Programme Name, which means carrying that column
-   through transform, adding it to the hierarchy, and changing
-   uq_sub_scheme_scheme.  That is a schema migration plus a full reload, so it
-   is recorded here rather than done quietly.
+   Un-merging those rows then exposed a second defect the merge had been
+   hiding: five "Total-" subtotal rows were loading as line items, inflating
+   actuals by 10.5% and revised by 14.2%.  transform() now drops summary rows
+   at every level of the hierarchy, not just at Group.  Net effect on the real
+   slice: 166 rows to 190, and actuals from 3,571,152.09 down to 3,447,569.03
+   crore, which matches the source exactly for the first time.
 
 4. No f-string SQL:
    Every query uses %s placeholders.  Table and column names come from our
@@ -157,23 +155,34 @@ def _upsert_sub_scheme(
     sub_scheme_name: str,
     scheme_id: int,
     major_head_id: int,
+    programme_name: str,
+    sub_programme_name: str,
 ) -> int:
+    """Get-or-create a sub-scheme, keyed on all four identity columns.
+
+    Keying on (name, scheme_id) alone merged distinct line items -- see ADR 7.
+    Both programme columns are part of the lookup as well as the insert; keying
+    the insert without keying the read would return an arbitrary sibling.
+    """
     cursor.execute(
         """
         INSERT IGNORE INTO `sub_schemes`
-            (sub_scheme_name, scheme_id, major_head_id)
-        VALUES (%s, %s, %s)
+            (sub_scheme_name, scheme_id, major_head_id,
+             programme_name, sub_programme_name)
+        VALUES (%s, %s, %s, %s, %s)
         """,
-        (sub_scheme_name, scheme_id, major_head_id),
+        (sub_scheme_name, scheme_id, major_head_id,
+         programme_name, sub_programme_name),
     )
     cursor.execute(
         """
         SELECT sub_scheme_id
         FROM   `sub_schemes`
         WHERE  sub_scheme_name = %s AND scheme_id = %s
+          AND  programme_name = %s AND sub_programme_name = %s
         FOR SHARE
         """,
-        (sub_scheme_name, scheme_id),
+        (sub_scheme_name, scheme_id, programme_name, sub_programme_name),
     )
     return cursor.fetchone()[0]
 
@@ -236,6 +245,8 @@ def load(records: list[dict]) -> None:
                     record["sub_scheme_name"],
                     scheme_id,
                     major_head_id,
+                    record["programme_name"],
+                    record["sub_programme_name"],
                 )
                 fiscal_year_id = _upsert_fiscal_year(cursor, record["fiscal_year"])
 

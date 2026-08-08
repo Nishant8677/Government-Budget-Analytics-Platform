@@ -57,3 +57,4 @@ data/cleaned_*.csv
 .pytest_cache/
 .coverage
 htmlcov/
+backups/

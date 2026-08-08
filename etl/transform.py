@@ -55,7 +55,27 @@ REQUIRED_COLUMNS: list[str] = [
     "Budget 2022-2023",
 ]
 
-COLUMNS_TO_DROP: list[str] = ["Programme Name", "Sub Programme Name"]
+# Nothing is dropped any more. "Programme Name" and "Sub Programme Name" were
+# both on this list, described as irrelevant. They are the columns that carry
+# line-item identity: without them, nine distinct levies under Customs > Import
+# Duties collapse to one row and the loader keeps whichever arrives last. See
+# HIERARCHY_COLUMNS below and ADR 7.
+COLUMNS_TO_DROP: list[str] = []
+
+# Forward-filled: the source uses a blank cell to mean "same as the row above".
+FFILL_COLUMNS: list[str] = ["Group", "Scheme", "Sub Scheme Name", "Major Head Code"]
+
+# Identity columns that reach sub_schemes -- and they are deliberately NOT
+# forward-filled. A blank here means "this line item has no breakdown at that
+# level", not "same as above". Under Customs > Import Duties, only the two
+# "Basic Duties" rows carry a sub-programme; forward-filling would hand
+# "Through Debit in Ledger" to "Additional Duty on Customs", which is simply
+# false. Both treatments happen to yield 118 unique keys on today's data, so
+# uniqueness cannot be used to choose between them -- correctness has to.
+#
+# Blanks become '' rather than NULL because the schema's unique key cannot
+# constrain NULLs: MySQL treats every NULL as distinct from every other one.
+IDENTITY_COLUMNS: list[str] = ["Programme Name", "Sub Programme Name"]
 
 # ── Fiscal-year to column mapping ─────────────────────────────────────────────
 # Each fiscal year maps to the exact source columns for actuals/budget/revised.
@@ -82,6 +102,19 @@ FISCAL_YEAR_COLUMN_MAP: dict[str, dict[str, str | None]] = {
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _is_total_label(series: pd.Series) -> pd.Series:
+    """True where a hierarchy label marks a subtotal rather than a line item.
+
+    The source writes these as "Total-<parent>" -- "Total-Import Duties",
+    "Total-Basic Duties (including through Debit of Scrips)". Matching on the
+    "total" prefix is blunt, but it is what the data uses, and a genuine line
+    item beginning with the word "Total" would be indistinguishable to a human
+    reader too. Anchored at the start so a name merely containing the word is
+    kept.
+    """
+    return series.astype(str).str.strip().str.lower().str.startswith("total")
+
+
 def transform(df: pd.DataFrame) -> pd.DataFrame:
     """
     Clean and filter the raw budget DataFrame.
@@ -105,19 +138,34 @@ def transform(df: pd.DataFrame) -> pd.DataFrame:
     # 3. Forward-fill hierarchical categorical columns.
     #    The source CSV uses blank cells to continue the group/scheme from
     #    the previous row (a common spreadsheet convention).
-    for col in ["Group", "Scheme", "Sub Scheme Name", "Major Head Code"]:
+    for col in FFILL_COLUMNS:
         df[col] = df[col].ffill()
 
-    # 4. Remove summary / grand-total rows.
-    #    These rows have Group values like "Total-Tax Revenue", "Grand Total",
-    #    or are subtotal rows where Group is NaN (after ffill, shouldn't happen,
-    #    but defensive check).
+    # 3a. Identity columns are normalised, not filled -- see IDENTITY_COLUMNS.
+    for col in IDENTITY_COLUMNS:
+        df[col] = df[col].fillna("").astype(str).str.strip()
+
+    # 4. Remove summary / grand-total rows, at every level of the hierarchy.
+    #
+    #    Filtering on Group alone removes "Total-Tax Revenue" and "Grand Total"
+    #    but leaves subtotals that sit *inside* Tax Revenue and carry a
+    #    "Total-" label further down: "Total-Import Duties" in Customs,
+    #    "Total-Basic Duties" as a programme, and three more. Those are sums of
+    #    their siblings, so loading them double-counts.
+    #
+    #    Measured on the real dataset: 5 such rows inflate actuals by 10.5% and
+    #    the three budget/revised columns by 11.9% to 14.2% -- 2,002,349.70
+    #    crore in total. "Total-Import Duties" equals its six Import Duties
+    #    siblings to the paisa.
+    #
+    #    This went unnoticed because the old sub-scheme key merged the programme
+    #    subtotal into its own parent, hiding one of them; the other four have
+    #    been double-counted since the first load.
     original_len = len(df)
-    df = df[
-        df["Group"].notna()
-        & (df["Group"].astype(str).str.strip() == "Tax Revenue")
-        & df["Sub Scheme Name"].notna()
-    ].copy()
+    is_summary = df["Group"].isna() | (df["Group"].astype(str).str.strip() != "Tax Revenue")
+    for col in ["Sub Scheme Name", *IDENTITY_COLUMNS]:
+        is_summary |= _is_total_label(df[col])
+    df = df[~is_summary & df["Sub Scheme Name"].notna()].copy()
     removed = original_len - len(df)
     logger.info(
         "Removed %d summary/total rows.  %d data rows remain.", removed, len(df)
@@ -204,6 +252,8 @@ def get_fiscal_year_records(df: pd.DataFrame) -> list[dict]:
                     "group_name":      str(row["Group"]).strip(),
                     "scheme_name":     str(row["Scheme"]).strip(),
                     "sub_scheme_name": str(row["Sub Scheme Name"]).strip(),
+                    "programme_name": str(row["Programme Name"]).strip(),
+                    "sub_programme_name": str(row["Sub Programme Name"]).strip(),
                     "major_head_code": int(row["Major Head Code"]),
                     "fiscal_year":     fiscal_year,
                     "actuals":         actuals,

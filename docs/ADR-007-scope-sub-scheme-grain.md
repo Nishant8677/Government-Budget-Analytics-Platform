@@ -1,9 +1,28 @@
 # Scope: fixing the sub-scheme grain
 
-**Status:** proposed, not implemented
+**Status:** **implemented.** Migration run, verified, committed.
 **Bug:** `etl/load.py` design note 5
 **Blast radius measured, not estimated** — every figure below comes from a query
 against the live database or the source CSV.
+
+> **Outcome, and it is not what this document predicted.** The fix worked, but
+> un-merging the rows exposed a second and larger defect that the merge had been
+> hiding: five `Total-` subtotal rows were being loaded as line items, inflating
+> actuals by 10.5% and revised figures by 14.2%. Four of them predate this ADR
+> entirely and had been double-counted since the first load; the fifth only
+> became visible once its parent stopped absorbing it.
+>
+> So the net movement is **downward**, not upward. 238,351.64 crore was recovered
+> from the merge, 361,934.70 crore was removed as double-counting, and real
+> actuals fell from 3,571,152.09 to **3,447,569.03 crore** — which now matches
+> the source to the paisa. **The dashboard was overstating, not understating.**
+>
+> Predictions this document got wrong, kept rather than edited: 118 sub-schemes
+> (it is 104 — 118 counts CSV identities, 9 of which carry no figure in any year
+> and never load, and 5 more were the subtotals); 201 budget rows (190, same
+> reason); and the recommendation to forward-fill the two identity columns,
+> which would have handed "Through Debit in Ledger" to "Additional Duty on
+> Customs". Blanks there mean *no breakdown at this level*, not *same as above*.
 
 ---
 
@@ -75,13 +94,14 @@ index is a surprising thing to meet in a schema this small.
 
 ## Resulting shape
 
-| | Now | After |
-|---|---|---|
-| `sub_schemes` (real) | 87 | **118** |
-| `budget_data` (real) | 166 | **201** |
-| Actuals discarded | 238,351.64 crore | **0** |
-| `sub_schemes` (synthetic) | 92,153 | unchanged |
-| `budget_data` total | 921,696 | 921,731 |
+| | Before | Predicted | **Actual** |
+|---|---|---|---|
+| `sub_schemes` (real) | 87 | 118 | **104** |
+| `budget_data` (real) | 166 | 201 | **190** |
+| Real actuals | 3,571,152.09 cr | — | **3,447,569.03 cr** |
+| Matches source exactly | no | — | **yes** |
+| `sub_schemes` (synthetic) | 92,153 | unchanged | unchanged |
+| `budget_data` total | 921,696 | 921,731 | **921,720** |
 
 **The synthetic data is untouched, and that is the whole reason this is
 affordable.** Real and synthetic rows share zero `sub_scheme_id` values —

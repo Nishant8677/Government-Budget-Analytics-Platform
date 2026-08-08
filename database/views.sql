@@ -13,11 +13,19 @@
 -- ── v_budget_overview ─────────────────────────────────────────────────────────
 -- Full denormalised view: one row per sub-scheme × fiscal year.
 -- Used by the Data Explorer and export feature.
+--
+-- programme_name and sub_programme_name are exposed because they are part of a
+-- sub-scheme's identity, not decoration. Without them the Data Explorer shows
+-- nine rows all labelled "Import Duties" under Customs with different figures
+-- and no way to tell them apart -- which is what the old schema did to the data
+-- itself before it merged them. Blank means no breakdown exists at that level.
 CREATE OR REPLACE VIEW v_budget_overview AS
 SELECT
     g.group_name,
     s.scheme_name,
     ss.sub_scheme_name,
+    ss.programme_name,
+    ss.sub_programme_name,
     mh.major_head_code,
     fy.fiscal_year,
     bd.actuals,

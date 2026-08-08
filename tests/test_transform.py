@@ -133,10 +133,24 @@ class TestTransformNumericCoercion:
         """Major Head Code must be coerced to int (original CSV has floats/NaN)."""
         assert pd.api.types.is_integer_dtype(sample_clean_df["Major Head Code"])
 
-    def test_drops_programme_name_columns(self, sample_clean_df: pd.DataFrame) -> None:
-        """Useless Programme Name columns should be absent after transform."""
-        assert "Programme Name" not in sample_clean_df.columns
-        assert "Sub Programme Name" not in sample_clean_df.columns
+    def test_keeps_programme_name_columns(self, sample_clean_df: pd.DataFrame) -> None:
+        """Programme columns must survive transform -- they carry identity.
+
+        This test previously asserted the opposite, calling them useless. They
+        are the only thing distinguishing nine separate levies under
+        Customs > Import Duties, and dropping them merged those into one row.
+        See ADR 7.
+        """
+        assert "Programme Name" in sample_clean_df.columns
+        assert "Sub Programme Name" in sample_clean_df.columns
+
+    def test_blank_programme_becomes_empty_string_not_nan(
+        self, sample_clean_df: pd.DataFrame
+    ) -> None:
+        """Blank identity cells normalise to '' so the unique key can constrain them."""
+        for col in ("Programme Name", "Sub Programme Name"):
+            assert sample_clean_df[col].isna().sum() == 0
+            assert sample_clean_df[col].map(type).eq(str).all()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -208,6 +222,55 @@ class TestGetFiscalYearRecords:
         """Records where all financial values are 0 should not appear in output."""
         records = get_fiscal_year_records(all_zero_df)
         assert len(records) == 0, "All-zero records must be excluded from the load payload"
+
+    def test_sibling_levies_survive_as_separate_records(self) -> None:
+        """Line items sharing a sub-scheme name must not merge -- ADR 7.
+
+        Modelled on Customs > Import Duties, where the source carries several
+        levies under one sub-scheme name distinguished only by programme. The
+        old key was (sub_scheme_name, scheme_id), so these collapsed to one row
+        and the loader kept whichever arrived last.
+        """
+        df = pd.DataFrame({
+            "Group": ["Tax Revenue"] * 3,
+            "Scheme": ["Customs"] * 3,
+            "Sub Scheme Name": ["Import Duties"] * 3,
+            "Programme Name": ["Basic Duties", "Health Cess", "Social Welfare Surcharge"],
+            "Sub Programme Name": ["Other than debits", "", ""],
+            "Major Head Code": [37.0] * 3,
+            "Actuals 2020-2021": [106525.93, -13.52, 13447.39],
+            "Budget 2021-2022": [None] * 3,
+            "Revised 2021-2022": [None] * 3,
+            "Budget 2022-2023": [None] * 3,
+        })
+        records = get_fiscal_year_records(transform(df))
+        assert len(records) == 3, "each levy must produce its own record"
+        assert {r["programme_name"] for r in records} == {
+            "Basic Duties", "Health Cess", "Social Welfare Surcharge"
+        }
+        assert sum(r["actuals"] for r in records) == pytest.approx(119959.80)
+
+    def test_subtotal_rows_are_excluded(self) -> None:
+        """"Total-" labelled rows are sums of their siblings, not line items.
+
+        Loading them double-counts. Measured on the real dataset before this was
+        fixed: 5 such rows inflated actuals by 10.5% and revised by 14.2%.
+        """
+        df = pd.DataFrame({
+            "Group": ["Tax Revenue"] * 3,
+            "Scheme": ["Customs"] * 3,
+            "Sub Scheme Name": ["Import Duties", "Import Duties", "Total-Import Duties"],
+            "Programme Name": ["Basic Duties", "Total-Basic Duties", ""],
+            "Sub Programme Name": ["", "", ""],
+            "Major Head Code": [37.0] * 3,
+            "Actuals 2020-2021": [100.0, 100.0, 100.0],
+            "Budget 2021-2022": [None] * 3,
+            "Revised 2021-2022": [None] * 3,
+            "Budget 2022-2023": [None] * 3,
+        })
+        records = get_fiscal_year_records(transform(df))
+        assert len(records) == 1, "both subtotal rows must be dropped"
+        assert records[0]["actuals"] == 100.0
 
     def test_no_nan_reaches_the_load_payload(self, sample_clean_df: pd.DataFrame) -> None:
         """Absent figures must be None, never NaN.

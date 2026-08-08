@@ -97,7 +97,9 @@ Concurrency behaviour can be exercised directly with
 
 Measured on **921,696 rows — 921,530 synthetic and 166 real** (MySQL 8.0.43,
 Windows 11, 12 logical CPUs, InnoDB buffer pool at the 128 MB default). The
-split matters; see the caveat below. Reproduce with:
+split matters; see the caveat below. ADR 7 later corrected the real slice to 190
+rows over 92,257 sub-schemes; no figure here was re-measured against it, because
+none of them describe real rows. Reproduce with:
 
 ```bash
 python scripts/benchmark_index.py --trials 3 --repeats 7
