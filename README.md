@@ -95,8 +95,9 @@ Concurrency behaviour can be exercised directly with
 
 ## ⚡ Performance
 
-Measured on **921,696 synthetic rows** (MySQL 8.0.43, Windows 11, 12 logical
-CPUs, InnoDB buffer pool at the 128 MB default). Reproduce with:
+Measured on **921,696 rows — 921,530 synthetic and 166 real** (MySQL 8.0.43,
+Windows 11, 12 logical CPUs, InnoDB buffer pool at the 128 MB default). The
+split matters; see the caveat below. Reproduce with:
 
 ```bash
 python scripts/benchmark_index.py --trials 3 --repeats 7
@@ -183,7 +184,7 @@ The mechanism is **predicate pushdown**, not indexes. `v_scheme_summary` costs
 pushes a single equality into a `GROUP BY` view but not a disjunction, which is
 why one insight query using `IN (...)` cost 873 ms while four siblings using `=`
 cost 2–3 ms. Splitting it into a `UNION ALL` of two equality filters made it
-**369× faster**.
+**368× faster**.
 
 `v_fiscal_year_totals` separately joined `sub_schemes` just to count a column
 `budget_data` already had.

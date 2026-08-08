@@ -1,8 +1,18 @@
 # Index Engineering & Performance
 
-Everything below comes from `results/index_benchmark.json`, written by
-`scripts/benchmark_index.py`. Re-run it and you get a new file; nothing here is
-typed in by hand.
+Most figures below are read from a persisted artifact, and each section names
+the one it comes from: `results/index_benchmark.json` for the index results,
+`results/buffer_pool_benchmark.json` for the buffer pool and AHI grid,
+`results/dashboard_benchmark.json` for the dashboard's post-fix state. Re-run
+the scripts and you get new files.
+
+Four figures on this page are **not** persisted anywhere and are quoted from
+runs that were never captured to disk — the pre-fix dashboard column, the
+query-rewrite comparison, the `IN`-versus-`OR` pair, and the group count in
+`v_scheme_summary`. They are marked *(not persisted)* where they appear. The
+scripts write to fixed paths, so re-running one after a change overwrites the
+evidence for what came before it; that is how the pre-fix column was lost, and
+backing it again needs a `--baseline` mode rather than another run.
 
 ```bash
 python scripts/benchmark_index.py --trials 3 --repeats 7
@@ -145,15 +155,19 @@ joining to `schemes`, leaving the outer join 23 rows to name instead of 92,240
 to walk. Measured against a derived-table rewrite, and again with the fiscal
 year passed as a literal instead of a `MAX()` subquery:
 
-| Variant | Median |
-|---|---|
-| Baseline | 1962.7 ms |
-| Derived-table aggregation | 1777.2 ms |
-| Derived table + literal fiscal year | 1705.4 ms |
+| Variant | Median | |
+|---|---|---|
+| Baseline | 1962.7 ms | *(not persisted)* |
+| Derived-table aggregation | 1777.2 ms | *(not persisted)* |
+| Derived table + literal fiscal year | 1705.4 ms | *(not persisted)* |
 
-The optimizer produces the same plan shape regardless — it still scans all
-92,087 `sub_schemes` rows and probes `budget_data` by unique key. The query text
-is not the constraint.
+No script in `scripts/` runs this comparison, so these three medians were taken
+interactively and never written to a file. Treat them as indicative. The claim
+they support does not rest on them: the committed
+`explain.*.query_block` blocks in `results/index_benchmark.json` show the same
+plan shape across every arm — drive from `schemes`, `ref` into `sub_schemes`,
+`eq_ref` into `budget_data` — which is the actual evidence that **the query text
+is not the constraint**.
 
 ### The server configuration is worth 32.7%
 
@@ -275,7 +289,15 @@ dashboard never displays.
 
 Default filter state (`"All Years"` / `"All Schemes"`, which are the first
 selectbox options at `dashboard.py:410-412`, so this is what loads with no user
-interaction):
+interaction).
+
+> **This whole table is *(not persisted)*.** `scripts/benchmark_dashboard.py`
+> writes to a fixed path, so the post-fix run overwrote it and
+> `results/dashboard_benchmark.json` holds only the after-state. These medians
+> survive in prose and in the message of commit `9947a6d`, nowhere else. Two of
+> the three are still re-measurable — `v_scheme_summary` was bypassed, not
+> modified — but `load_fiscal_year_totals` needs the removed join restored to
+> reproduce.
 
 | Loader | Median | Rows |
 |---|---|---|
@@ -304,8 +326,10 @@ it aggregates the whole table by definition, and it runs on every page load.
 `v_scheme_summary` groups by `(scheme_name, group_name, fiscal_year)` *and*
 computes `COUNT(DISTINCT sub_scheme_id)` per group. Filtered to one year it costs
 1.3 ms, because MySQL 8 pushes the predicate into the view. Unfiltered there is
-nothing to push, so it computes 299 groups of `COUNT(DISTINCT)` across 921,696
-rows and the outer query re-aggregates the result.
+nothing to push, so it computes `COUNT(DISTINCT)` for every
+`(scheme, group, fiscal_year)` group across 921,696 rows — 299 of them, a count
+taken interactively and *(not persisted)* — and the outer query re-aggregates
+the result.
 
 The single-year path being 1.3 ms and the all-years path being 205 s is the same
 view, and the difference is entirely whether a predicate can be pushed down.
@@ -315,12 +339,17 @@ view, and the difference is entirely whether a predicate can be pushed down.
 Three changes, each verified to return byte-identical rows *before* being
 applied. Re-measured with the same script:
 
-| | Before | After | Factor |
+| | Before *(not persisted)* | After | Factor |
 |---|---|---|---|
 | `load_scheme_summary("All Years")` | 205,039 ms | 23,039 ms | **8.9×** |
 | `load_fiscal_year_totals` | 11,144 ms | 6,915 ms | 1.6× |
-| `insights: highest growth` | 873.1 ms | 2.4 ms | **369×** |
+| `insights: highest growth` | 873.1 ms | 2.37 ms | **368×** |
 | **Page load** | **217,076 ms** | **29,971 ms** | **7.2×** |
+
+Every figure in the *After* column is read from
+`results/dashboard_benchmark.json`, and 29,971 ms is the exact sum of the eleven
+medians it records. No figure in the *Before* column has an artifact behind it,
+so each factor is only as good as a number that was never written down.
 
 **1. `v_fiscal_year_totals` joined a table it did not need.** It joined
 `sub_schemes` solely to compute `COUNT(DISTINCT ss.sub_scheme_id)`, but
@@ -340,13 +369,15 @@ is the most interesting of the three. The query used
 sibling insight queries — identical in shape but using `fiscal_year = '...'` —
 cost 2–3 ms.
 
-Rewriting `IN` as `OR` changed nothing (874.8 ms vs 873.5 ms), which rules out
-`IN` itself. **MySQL pushes a single equality predicate into a `GROUP BY` view
-but will not push a disjunction.** With `IN` or `OR` there is nothing to push,
-so the view aggregates all 921,696 rows. Filtered one year at a time, each
-branch pushes down and the same rows come back in 2.4 ms.
+Rewriting `IN` as `OR` changed nothing (874.8 ms vs 873.5 ms — *(not
+persisted)*, and the control that makes this section an argument rather than an
+anecdote, so it is the first thing a `--baseline` mode should capture), which
+rules out `IN` itself. **MySQL pushes a single equality predicate into a
+`GROUP BY` view but will not push a disjunction.** With `IN` or `OR` there is
+nothing to push, so the view aggregates all 921,696 rows. Filtered one year at a
+time, each branch pushes down and the same rows come back in 2.37 ms.
 
-That one mechanism explains both the 369× here and the 8.9× above, and it is the
+That one mechanism explains both the 368× here and the 8.9× above, and it is the
 actual performance story of this dashboard — not indexing.
 
 ### What remains
@@ -389,7 +420,7 @@ this document exists to correct.
 **Predicate pushdown is the robust one.** The magnitudes scale with row and group
 counts, but the behaviour — one equality is pushed into the view, a disjunction
 is not — is a property of the optimizer, not of this data. Any table large enough
-for the aggregation to cost something will show it, which is why the 369× and the
+for the aggregation to cost something will show it, which is why the 368× and the
 8.9× share a single explanation. This is the finding worth carrying to another
 codebase.
 

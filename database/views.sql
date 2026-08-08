@@ -68,9 +68,15 @@ GROUP BY    s.scheme_name, g.group_name, fy.fiscal_year;
 -- budget_data, so the join fetched 92,240 rows to read a value it had in hand.
 -- Removing it is provably safe rather than a judgement call: the join was an
 -- INNER JOIN on a NOT NULL foreign key with ON DELETE RESTRICT, so it could
--- neither filter rows nor duplicate them. Measured at 921,696 rows the removal
--- is worth 3,451 ms (9,762 ms -> 6,311 ms, 35.4%) and returns identical rows.
--- See PERFORMANCE.md and results/dashboard_benchmark.json.
+-- neither filter rows nor duplicate them, and the rows returned are identical
+-- with and without it.
+--
+-- An earlier revision of this comment credited the removal with 9,762 ms ->
+-- 6,311 ms and cited results/dashboard_benchmark.json, which contains neither
+-- figure. Those came from an isolated A/B of the join alone that was never
+-- written to disk; the persisted end-to-end measurement is 11,144 ms -> 6,915 ms
+-- across all three dashboard fixes, and only its after-value has an artifact.
+-- See the page-load table in PERFORMANCE.md.
 CREATE OR REPLACE VIEW v_fiscal_year_totals AS
 SELECT
     fy.fiscal_year,

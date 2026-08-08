@@ -266,7 +266,7 @@ def load_scheme_summary(fiscal_year: str) -> pd.DataFrame:
     # is nothing to push, so it groups by (scheme, group, fiscal_year) and
     # computes COUNT(DISTINCT sub_scheme_id) for every group before this outer
     # query throws the per-year split away again. Measured at 921,696 rows that
-    # is 205 s against 21 s for the aggregation below, which produces
+    # is 205 s against 23.0 s for the aggregation below, which produces
     # byte-identical rows. See PERFORMANCE.md.
     return _run_query("""
         SELECT   s.scheme_name, g.group_name,
@@ -320,7 +320,7 @@ def load_insights() -> dict:
     # predicate down into v_scheme_summary's GROUP BY, but not a disjunction --
     # IN and OR both measured 874 ms because neither pushes, leaving the view to
     # aggregate all 921,696 rows. Filtered one year at a time each branch pushes
-    # down, and the same rows come back in 4 ms. See PERFORMANCE.md.
+    # down, and the same rows come back in 2.37 ms. See PERFORMANCE.md.
     df = _run_query("""
         SELECT scheme_name,
                MAX(CASE WHEN fiscal_year='2021-2022' THEN total_budget END) AS b21,
