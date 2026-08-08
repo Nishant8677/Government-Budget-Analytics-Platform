@@ -29,17 +29,47 @@ Design decisions
    auto-increment values on every duplicate.  Worth revisiting if the reference
    lookups ever become the bottleneck; see design note 3.
 
-2. Single transaction per batch:
-   All records are committed in one transaction.  If any record fails the
-   entire batch is rolled back, preventing partial loads.  The caller can
-   then fix the source data and re-run safely.
+2. One transaction per batch, but per-record errors are skipped, not fatal:
+   An earlier version of this note claimed any failing record rolls the whole
+   batch back.  That is not what the code does, and the difference matters
+   enough to state precisely.
+
+   Every record is written inside one transaction, committed once at the end.
+   A mysql.connector.Error raised while processing a single record is caught
+   inside the loop, logged as a warning, counted in `skipped`, and the loop
+   continues -- so the batch commits with that record missing.  Only an
+   exception that escapes the loop (a connection drop, a failure during
+   commit, anything not a per-record Error) triggers the rollback.
+
+   Skip-and-continue is the right default for this source: the input is a
+   government CSV whose shape changes between publications, and one malformed
+   line should not block an otherwise good load.  All-or-nothing would be
+   right if partial state were worse than no state, which it is not here --
+   the loader is idempotent, so a re-run repairs a short load.
+
+   The real weakness is not the choice but its reporting.  A skipped record
+   survives only as a log line, and load() returns None, so a caller cannot
+   tell a clean load from one that dropped half its rows.  Fixing that means
+   writing skipped records to a dead-letter file and failing the run when the
+   skip rate crosses a threshold.  Until then, check the "Skipped:" count in
+   the completion log -- silent partial success is the failure mode this
+   design is exposed to.
 
 3. executemany() NOT used for reference tables:
    Reference tables (groups, schemes, etc.) need get-or-create semantics —
    we must return the ID after insert.  executemany() does not support this
    pattern.  However, budget_data rows are fully resolved before the loop,
-   so they could be batched; we leave that as a future optimisation since
-   the dataset is small (~300 rows).
+   so they could be batched; we leave that as a future optimisation because
+   this pipeline handles 261 records per run.
+
+   An earlier version of this note said "~300 rows", which was close enough to
+   be misleading next to the 921,696 rows in budget_data.  They measure
+   different things.  The real source covers 87 sub-schemes across 3 fiscal
+   years, so transform emits 87 x 3 = 261 records, of which 166 carry a
+   non-zero figure and reach budget_data -- the rest are skipped as empty.
+   Everything else in the table is backdated synthetic data written directly
+   by scripts/generate_synthetic_data.py, which batches with executemany() and
+   never imports this module.  PERFORMANCE.md documents the split.
 
 4. No f-string SQL:
    Every query uses %s placeholders.  Table and column names come from our
@@ -147,10 +177,17 @@ def load(records: list[dict]) -> None:
             group_name, scheme_name, sub_scheme_name, major_head_code,
             fiscal_year, actuals, budget, revised
 
+    Records that fail individually are logged and skipped, not raised -- see
+    design note 2.  The batch still commits, so a successful return does NOT
+    mean every record landed.  The count that tells you is in the completion
+    log line ("Inserted/updated: N  |  Skipped: M").
+
     Raises
     ──────
     mysql.connector.Error
-        Re-raised after rolling back the transaction if any insert fails.
+        Only for a failure that escapes the per-record handler -- a lost
+        connection, or an error during commit.  The transaction is rolled back
+        before it propagates.  A single bad record does not reach here.
     """
     logger.info("Loading %d records into database …", len(records))
 
