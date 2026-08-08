@@ -45,6 +45,7 @@ to identify and clean up by hand.
 """
 from __future__ import annotations
 
+import inspect
 import sys
 import threading
 import time
@@ -55,6 +56,17 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from etl.load import _upsert_group  # noqa: E402
 from utils.db import get_connection  # noqa: E402
+
+
+def helper_uses_locking_read() -> bool:
+    """Whether the helper under test reads back with FOR SHARE.
+
+    Without this the two outcomes are indistinguishable: 'no race' means the fix
+    holds if the read-back locks, and means the interleaving simply missed if it
+    does not. A green run against a plain SELECT is not evidence of safety.
+    """
+    src = inspect.getsource(_upsert_group).upper()
+    return "FOR SHARE" in src or "LOCK IN SHARE MODE" in src
 
 PREFIX = "RACETEST-"  # no LIKE wildcards, so cleanup cannot over-match
 STEP_TIMEOUT = 15.0
@@ -120,6 +132,14 @@ def run_arm(isolation: str, tag: str) -> dict[str, Any]:
             return outcome
 
         # Diagnostic: does the write layer see B's row while the read layer does not?
+        #
+        # Expect this to flip once the helper is fixed, and the flip is itself
+        # informative. With a plain read-back the first _upsert_group above pins
+        # the snapshot before B commits, so this SELECT reports False. With a
+        # FOR SHARE read-back that call is a locking read and pins nothing, so
+        # the snapshot is instead established here -- after B's commit -- and it
+        # reports True. The fix does not just bypass the snapshot for one query;
+        # it stops the upsert helpers from pinning one at all.
         cur.execute("INSERT IGNORE INTO `groups` (group_name) VALUES (%s)", (contended,))
         cur.execute("SHOW WARNINGS")
         outcome["insert_ignore_warnings"] = [w[2] for w in cur.fetchall()]
@@ -177,22 +197,30 @@ def main() -> int:
     print("\n" + "=" * 72)
     rr = next(r for r in results if r["isolation"] == "REPEATABLE READ")
     rc = next(r for r in results if r["isolation"] == "READ COMMITTED")
-    print(f"  REPEATABLE READ : {rr['result']}")
-    print(f"  READ COMMITTED  : {rc['result']}")
+    locking = helper_uses_locking_read()
+    print(f"  REPEATABLE READ    : {rr['result']}")
+    print(f"  READ COMMITTED     : {rc['result']}")
+    print(f"  read-back locks    : {locking}")
 
     if rr["result"] == "RACE REPRODUCED" and rc["result"] == "NO RACE":
-        print("\n  CONFIRMED. The failure tracks the isolation level and nothing else,")
-        print("  so ADR 3's claim that InnoDB handles this does not hold under ADR 5's")
-        print("  choice of REPEATABLE READ.")
+        print("\n  RACE PRESENT. The failure tracks the isolation level and nothing")
+        print("  else, so ADR 3's claim that InnoDB handles this does not hold under")
+        print("  ADR 5's choice of REPEATABLE READ. Fix the read-back before loading")
+        print("  from more than one worker.")
         verdict = 1
-    elif rr["result"] == "NO RACE":
-        print("\n  NOT REPRODUCED under this interleaving. The hypothesis is wrong, or")
-        print("  the snapshot is not pinned where it was assumed to be. Do not claim")
-        print("  this bug without a different test that does reproduce it.")
+    elif rr["result"] == "NO RACE" and rc["result"] == "NO RACE" and locking:
+        print("\n  PASS. Neither arm loses the row, and the helper reads back with a")
+        print("  locking read -- so the snapshot is bypassed by construction rather")
+        print("  than by luck of timing. This is the regression gate for that fix.")
+        verdict = 0
+    elif rr["result"] == "NO RACE" and not locking:
+        print("\n  INCONCLUSIVE. The helper still uses a plain SELECT, so a clean run")
+        print("  means this interleaving missed -- not that the pattern is safe. Do")
+        print("  not read this as a pass.")
         verdict = 0
     else:
-        print("\n  INCONCLUSIVE -- both arms behaved the same way, so isolation level is")
-        print("  not the variable being measured. The test is at fault, not the code.")
+        print("\n  INCONCLUSIVE -- the arms did not separate, so isolation level is not")
+        print("  the variable being measured. The test is at fault, not the code.")
         verdict = 0
 
     print("=" * 72)

@@ -5,11 +5,29 @@ Load phase: persist transformed records to MySQL.
 
 Design decisions
 ────────────────
-1. Upsert pattern (INSERT IGNORE + SELECT, or ON DUPLICATE KEY UPDATE):
+1. Upsert pattern (INSERT IGNORE + SELECT ... FOR SHARE):
    Running the pipeline twice will NOT create duplicates.  All reference
    tables (groups, schemes, major_heads, sub_schemes, fiscal_years) use
    INSERT IGNORE so existing rows are kept and the new ID is fetched.
    budget_data uses ON DUPLICATE KEY UPDATE so re-runs refresh the figures.
+
+   The read-back is FOR SHARE, and that is load-bearing rather than cautious.
+   With a plain SELECT this pattern loses rows to a concurrent loader under
+   REPEATABLE READ: the snapshot is pinned at the transaction's first
+   consistent read, INSERT IGNORE is a locking write that does not establish
+   it, so a reference row committed by another worker afterwards collides with
+   the INSERT while staying invisible to the SELECT.  fetchone() then returns
+   None and None[0] raises TypeError mid-load.  FOR SHARE makes the read-back a
+   locking read, which sees the latest committed row rather than the snapshot.
+   scripts/test_upsert_race.py reproduces the failure and gates the fix.
+
+   The cost is a shared lock held on each reference row until commit, which
+   serialises concurrent loaders that touch the same group or scheme.  These
+   tables have tiny cardinality and the locks are short, so this is cheap here.
+   The alternative -- INSERT ... ON DUPLICATE KEY UPDATE with LAST_INSERT_ID()
+   -- would remove the second round trip as well, at the cost of burning
+   auto-increment values on every duplicate.  Worth revisiting if the reference
+   lookups ever become the bottleneck; see design note 3.
 
 2. Single transaction per batch:
    All records are committed in one transaction.  If any record fails the
@@ -46,7 +64,7 @@ def _upsert_group(cursor, group_name: str) -> int:
         (group_name,),
     )
     cursor.execute(
-        "SELECT group_id FROM `groups` WHERE group_name = %s",
+        "SELECT group_id FROM `groups` WHERE group_name = %s FOR SHARE",
         (group_name,),
     )
     return cursor.fetchone()[0]
@@ -58,7 +76,8 @@ def _upsert_scheme(cursor, scheme_name: str, group_id: int) -> int:
         (scheme_name, group_id),
     )
     cursor.execute(
-        "SELECT scheme_id FROM `schemes` WHERE scheme_name = %s AND group_id = %s",
+        "SELECT scheme_id FROM `schemes` WHERE scheme_name = %s AND group_id = %s "
+        "FOR SHARE",
         (scheme_name, group_id),
     )
     return cursor.fetchone()[0]
@@ -70,7 +89,7 @@ def _upsert_major_head(cursor, major_head_code: int) -> int:
         (major_head_code,),
     )
     cursor.execute(
-        "SELECT major_head_id FROM `major_heads` WHERE major_head_code = %s",
+        "SELECT major_head_id FROM `major_heads` WHERE major_head_code = %s FOR SHARE",
         (major_head_code,),
     )
     return cursor.fetchone()[0]
@@ -95,6 +114,7 @@ def _upsert_sub_scheme(
         SELECT sub_scheme_id
         FROM   `sub_schemes`
         WHERE  sub_scheme_name = %s AND scheme_id = %s
+        FOR SHARE
         """,
         (sub_scheme_name, scheme_id),
     )
@@ -107,7 +127,7 @@ def _upsert_fiscal_year(cursor, fiscal_year: str) -> int:
         (fiscal_year,),
     )
     cursor.execute(
-        "SELECT fiscal_year_id FROM `fiscal_years` WHERE fiscal_year = %s",
+        "SELECT fiscal_year_id FROM `fiscal_years` WHERE fiscal_year = %s FOR SHARE",
         (fiscal_year,),
     )
     return cursor.fetchone()[0]
