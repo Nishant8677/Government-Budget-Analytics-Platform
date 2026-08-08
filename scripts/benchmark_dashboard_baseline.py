@@ -1,4 +1,4 @@
-"""Re-measures the pre-fix dashboard queries that commit 9947a6d superseded.
+"""Re-measures the pre-fix dashboard queries that commit 1984be9 superseded.
 
 That commit reported a page load of 217,076 ms falling to 29,971 ms. Only the
 second number has an artifact. benchmark_dashboard.py writes to a fixed path, so
@@ -50,7 +50,7 @@ from utils.db import table_sizes_mb  # noqa: E402
 
 OUTPUT = Path(__file__).resolve().parent.parent / "results" / "dashboard_baseline_benchmark.json"
 
-# The v_fiscal_year_totals body as it stood at 9947a6d^, before the sub_schemes
+# The v_fiscal_year_totals body as it stood at 1984be9^, before the sub_schemes
 # join was removed. Restoring it is the only way to reproduce the 11,144 ms.
 VIEW_PREFIX = """CREATE OR REPLACE VIEW v_fiscal_year_totals AS
 SELECT
@@ -65,7 +65,7 @@ JOIN        fiscal_years  fy ON bd.fiscal_year_id  = fy.fiscal_year_id
 GROUP BY    fy.fiscal_year
 ORDER BY    fy.fiscal_year"""
 
-# Pre-fix loader bodies, lifted verbatim from app/dashboard.py at 9947a6d^.
+# Pre-fix loader bodies, lifted verbatim from app/dashboard.py at 1984be9^.
 PREFIX_ALL_YEARS = (
     "SELECT   scheme_name, group_name, "
     "         SUM(total_actuals) AS total_actuals, "
@@ -174,7 +174,7 @@ def environment(cur) -> dict[str, Any]:
         "synthetic_rows_total": sum(n for n in dist.values() if n >= 1000),
         "note": (
             "Pre-fix measurements, reproducing the queries app/dashboard.py issued "
-            "before commit 9947a6d. Compare against results/dashboard_benchmark.json, "
+            "before commit 1984be9. Compare against results/dashboard_benchmark.json, "
             "which holds the post-fix state of the same queries."
         ),
     }
