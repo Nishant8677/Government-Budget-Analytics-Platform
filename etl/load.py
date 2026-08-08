@@ -60,16 +60,43 @@ Design decisions
    we must return the ID after insert.  executemany() does not support this
    pattern.  However, budget_data rows are fully resolved before the loop,
    so they could be batched; we leave that as a future optimisation because
-   this pipeline handles 261 records per run.
+   this pipeline handles 201 records per run.
 
-   An earlier version of this note said "~300 rows", which was close enough to
-   be misleading next to the 921,696 rows in budget_data.  They measure
-   different things.  The real source covers 87 sub-schemes across 3 fiscal
-   years, so transform emits 87 x 3 = 261 records, of which 166 carry a
-   non-zero figure and reach budget_data -- the rest are skipped as empty.
-   Everything else in the table is backdated synthetic data written directly
+   Measured, because two earlier attempts at this figure were wrong.  It first
+   said "~300 rows", which was close enough to be misleading next to the
+   921,696 rows in budget_data -- those count different things.  It then said
+   261, which is the number of (sub-scheme, fiscal year) pairs that could
+   exist: 87 sub-schemes x 3 years.  Neither is what the pipeline processes.
+
+   The chain is: 87 sub-schemes x 3 years = 261 possible pairs; transform emits
+   201 records, having skipped 60 pairs carrying no figure at all; those 201
+   collapse onto 166 distinct (sub_scheme, fiscal_year) keys and 166 rows land.
+
+   That last step is data loss, not deduplication -- see the WARNING below.
+
+   Everything else in budget_data is backdated synthetic data written directly
    by scripts/generate_synthetic_data.py, which batches with executemany() and
    never imports this module.  PERFORMANCE.md documents the split.
+
+5. KNOWN BUG -- duplicate sub-scheme names silently overwrite each other:
+   35 of the 201 records collapse onto 8 keys that already exist, and
+   ON DUPLICATE KEY UPDATE means the last one wins.  They are not duplicates.
+   The source distinguishes them by "Programme Name", which transform() drops
+   as irrelevant: under Customs > Import Duties there are nine separate levies
+   -- Basic Duties, Social Welfare Surcharge, Health Cess, three education
+   cesses and more -- all sharing a sub-scheme name and all carrying Major Head
+   Code 37, so major_head_code cannot separate them either.
+
+   Measured against the real CSV, the 8 conflicting keys hold 361,934.70 crore
+   of actuals and store 123,583.06 -- so **238,351.64 crore is silently
+   discarded**, and every scheme total the dashboard shows for those rows is
+   understated.
+
+   The fix is not in this module.  The grain of `sub_schemes` is one level too
+   coarse: identity needs Programme Name, which means carrying that column
+   through transform, adding it to the hierarchy, and changing
+   uq_sub_scheme_scheme.  That is a schema migration plus a full reload, so it
+   is recorded here rather than done quietly.
 
 4. No f-string SQL:
    Every query uses %s placeholders.  Table and column names come from our

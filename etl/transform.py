@@ -123,7 +123,13 @@ def transform(df: pd.DataFrame) -> pd.DataFrame:
         "Removed %d summary/total rows.  %d data rows remain.", removed, len(df)
     )
 
-    # 5. Coerce financial columns to numeric; fill NaN with 0.0.
+    # 5. Coerce financial columns to numeric, leaving unparseable values as NaN.
+    #    Deliberately NOT filled with 0.0. The source omits figures the
+    #    government did not publish, and budget_data models that as NULL -- a
+    #    zero would assert the government budgeted nothing, which is a different
+    #    claim. The distinction is invisible to SUM but not to AVG or to the
+    #    utilisation percentage, where a fabricated zero drags the result down
+    #    while a NULL is correctly excluded.
     financial_cols = [
         "Actuals 2020-2021",
         "Budget 2021-2022",
@@ -131,7 +137,7 @@ def transform(df: pd.DataFrame) -> pd.DataFrame:
         "Budget 2022-2023",
     ]
     for col in financial_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # 6. Convert Major Head Code to integer (source has it as float after NA fills).
     df["Major Head Code"] = (
@@ -150,6 +156,25 @@ def transform(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def _figure(row: pd.Series, column: str | None) -> float | None:
+    """Read one financial figure, mapping 'not published' to None.
+
+    Two different absences collapse to the same result, which is intended.
+    `column is None` means the government publishes no such figure for that
+    fiscal year at all -- see FISCAL_YEAR_COLUMN_MAP. A NaN means the column
+    exists but this row has no value in it. Both are "no figure", and
+    budget_data stores both as NULL.
+
+    Guarding NaN explicitly matters because float('nan') is not None and would
+    survive every None check downstream, reaching the database as a value the
+    DECIMAL column cannot represent.
+    """
+    if column is None:
+        return None
+    value = row[column]
+    return None if pd.isna(value) else float(value)
+
+
 def get_fiscal_year_records(df: pd.DataFrame) -> list[dict]:
     """
     Explode the wide-format cleaned DataFrame into one dict per
@@ -163,11 +188,13 @@ def get_fiscal_year_records(df: pd.DataFrame) -> list[dict]:
 
     for _, row in df.iterrows():
         for fiscal_year, col_map in FISCAL_YEAR_COLUMN_MAP.items():
-            actuals = float(row[col_map["actuals"]]) if col_map["actuals"] else None
-            budget  = float(row[col_map["budget"]])  if col_map["budget"]  else None
-            revised = float(row[col_map["revised"]]) if col_map["revised"] else None
+            actuals = _figure(row, col_map["actuals"])
+            budget  = _figure(row, col_map["budget"])
+            revised = _figure(row, col_map["revised"])
 
-            # Skip rows where every value is zero or None (no useful data)
+            # Skip rows carrying no information: everything absent, or every
+            # figure present but zero. A row that is partly absent and partly
+            # non-zero is kept, and the absent parts stay None.
             values = [v for v in (actuals, budget, revised) if v is not None]
             if not values or all(v == 0.0 for v in values):
                 continue

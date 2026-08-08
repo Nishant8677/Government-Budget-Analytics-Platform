@@ -99,11 +99,35 @@ class TestTransformForwardFill:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestTransformNumericCoercion:
-    def test_fills_missing_actuals_with_zero(self, sample_clean_df: pd.DataFrame) -> None:
-        assert sample_clean_df["Actuals 2020-2021"].isna().sum() == 0
+    def test_missing_figures_stay_missing(self, sample_clean_df: pd.DataFrame) -> None:
+        """An absent figure must survive transform as NaN, not become 0.0.
 
-    def test_fills_missing_budget_2022_with_zero(self, sample_clean_df: pd.DataFrame) -> None:
-        assert sample_clean_df["Budget 2022-2023"].isna().sum() == 0
+        These two tests previously asserted the opposite -- that no NaN
+        survived, because transform() filled with 0.0. That conflated "the
+        government did not publish this" with "the government published zero",
+        which budget_data models as NULL versus 0 and which AVG and the
+        utilisation percentage treat differently.
+        """
+        assert sample_clean_df["Budget 2022-2023"].isna().sum() > 0
+
+    def test_present_figures_are_numeric(self, sample_clean_df: pd.DataFrame) -> None:
+        """Coercion still applies to the values that are there."""
+        col = sample_clean_df["Actuals 2020-2021"]
+        assert pd.api.types.is_float_dtype(col)
+        assert col.notna().sum() > 0
+
+    def test_unparseable_values_become_nan(self) -> None:
+        """A non-numeric cell coerces to NaN rather than raising or persisting."""
+        df = pd.DataFrame({
+            "Group": ["Tax Revenue"], "Scheme": ["S"], "Sub Scheme Name": ["Sub"],
+            "Programme Name": ["NA"], "Sub Programme Name": ["NA"],
+            "Major Head Code": [20.0],
+            "Actuals 2020-2021": ["not a number"],
+            "Budget 2021-2022": [10.0], "Revised 2021-2022": [None],
+            "Budget 2022-2023": [None],
+        })
+        out = transform(df)
+        assert pd.isna(out["Actuals 2020-2021"].iloc[0])
 
     def test_major_head_code_is_integer_dtype(self, sample_clean_df: pd.DataFrame) -> None:
         """Major Head Code must be coerced to int (original CSV has floats/NaN)."""
@@ -184,6 +208,42 @@ class TestGetFiscalYearRecords:
         """Records where all financial values are 0 should not appear in output."""
         records = get_fiscal_year_records(all_zero_df)
         assert len(records) == 0, "All-zero records must be excluded from the load payload"
+
+    def test_no_nan_reaches_the_load_payload(self, sample_clean_df: pd.DataFrame) -> None:
+        """Absent figures must be None, never NaN.
+
+        The regression guard for dropping fillna(0.0): float('nan') is not None,
+        so it passes every `is not None` check and would reach a DECIMAL column
+        that cannot represent it.
+        """
+        for record in get_fiscal_year_records(sample_clean_df):
+            for field in ("actuals", "budget", "revised"):
+                value = record[field]
+                assert value is None or not pd.isna(value), (
+                    f"{field} is NaN in {record['sub_scheme_name']} "
+                    f"{record['fiscal_year']} -- it should be None"
+                )
+
+    def test_missing_figure_becomes_none_not_zero(self) -> None:
+        """A partly-published row keeps its figure and nulls the rest.
+
+        The row below has a 2022-23 budget and no 2021-22 figures. The 2022-23
+        record must survive with budget set; nothing may be invented as 0.0.
+        """
+        df = pd.DataFrame({
+            "Group": ["Tax Revenue"], "Scheme": ["S"], "Sub Scheme Name": ["Sub"],
+            "Programme Name": ["NA"], "Sub Programme Name": ["NA"],
+            "Major Head Code": [20.0],
+            "Actuals 2020-2021": [None],
+            "Budget 2021-2022": [None],
+            "Revised 2021-2022": [None],
+            "Budget 2022-2023": [500.0],
+        })
+        records = get_fiscal_year_records(transform(df))
+        assert [r["fiscal_year"] for r in records] == ["2022-2023"]
+        assert records[0]["budget"] == 500.0
+        assert records[0]["actuals"] is None
+        assert records[0]["revised"] is None
 
     def test_2020_records_have_null_budget_and_revised(
         self, sample_clean_df: pd.DataFrame
