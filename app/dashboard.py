@@ -12,8 +12,14 @@ Six analytical tabs:
   6. 🔍 Data Explorer   — Searchable / sortable table, CSV + Excel export
 
 Performance:
-  • @st.cache_resource — one DB connection per browser session
+  • @st.cache_resource — one connection pool per process, shared by all sessions
   • @st.cache_data(ttl=300) — 5-minute query result cache
+
+  st.cache_resource caches globally, not per session. An earlier version of this
+  docstring said "one DB connection per browser session" and held a bare
+  connection at that scope, which meant every concurrent user shared one
+  non-thread-safe connection. It caches the pool now; each query checks out its
+  own connection and returns it on completion.
 
 Run with:
     streamlit run app/dashboard.py        (from project root)
@@ -34,7 +40,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from mysql.connector import Error
 
-from utils.db import get_connection
+from utils.db import get_pool
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -221,17 +227,30 @@ ORDER BY group_name, scheme_name, sub_scheme_name, fiscal_year;
 # DB connection (cached at session level)
 # ─────────────────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
-def _get_conn():
-    return get_connection()
+def _get_pool():
+    """One pool per process, shared by every session.
+
+    st.cache_resource is global across sessions and users -- not per-session, as
+    an earlier version of this module claimed. A pool is the right thing to hold
+    at that scope; a bare connection is not, because mysql-connector connections
+    are not thread-safe and Streamlit gives each session its own thread.
+    """
+    return get_pool()
 
 
 def _run_query(sql: str, params: tuple = ()) -> pd.DataFrame:
-    conn = _get_conn()
+    conn = _get_pool().get_connection()
     try:
+        # Pooled connections outlive MySQL's wait_timeout, so a dashboard left
+        # open overnight can be handed a dead socket. Ping reconnects instead of
+        # failing the query.
+        conn.ping(reconnect=True, attempts=2, delay=1)
         return pd.read_sql(sql, conn, params=params)
     except Error as exc:
         logger.error("Query failed: %s", exc)
         raise
+    finally:
+        conn.close()  # returns it to the pool rather than closing the socket
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -387,8 +406,18 @@ def _to_excel(df: pd.DataFrame) -> bytes:
 
 
 def _check_connection() -> bool:
+    """Health probe: can we take a connection from the pool and use it?
+
+    Checks out and returns one rather than inspecting a cached handle, so a
+    healthy result means a query would actually succeed right now.
+    """
     try:
-        return _get_conn().is_connected()
+        conn = _get_pool().get_connection()
+        try:
+            conn.ping(reconnect=True, attempts=1, delay=0)
+            return conn.is_connected()
+        finally:
+            conn.close()
     except Exception:
         return False
 
