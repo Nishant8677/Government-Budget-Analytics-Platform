@@ -127,8 +127,8 @@ Full method, all raw samples, and the `EXPLAIN FORMAT=JSON` for every arm are in
 ### What actually helped: buffer pool sizing — 32.7%
 
 If the schema was not the constraint, the next question was what is. The server
-was running `innodb_buffer_pool_size` at its **128 MB default** against a 90 MB
-table.
+was running `innodb_buffer_pool_size` at its **128 MB default** against a table
+of comparable size.
 
 | Buffer pool | Median | n |
 |---|---|---|

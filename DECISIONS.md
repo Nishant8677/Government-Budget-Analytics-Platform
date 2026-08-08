@@ -88,7 +88,8 @@ in a derived table, so the outer join names 23 rows instead of walking 92,240 �
 produced 1962 ms → 1705 ms, and `EXPLAIN` shows the optimizer collapses it back
 to the same plan shape. Not worth the loss of readability.
 
-`innodb_buffer_pool_size` was at its 128 MB default against a 90 MB table.
+`innodb_buffer_pool_size` was at its 128 MB default against a table of
+comparable size.
 Raising it to 1 GB is worth **32.7%** (1783.5 ms → 1200.7 ms, n=21 per cell,
 arms interleaved). That is four times what the covering index achieves when
 forced, from a configuration line rather than a schema change.

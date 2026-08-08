@@ -56,6 +56,7 @@ import mysql.connector
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from config.settings import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER  # noqa: E402
+from utils.db import TRACKED_TABLES, table_sizes_mb  # noqa: E402
 
 INDEX_NAME = "idx_budget_fy_sub_budget"
 INDEX_DDL = (
@@ -171,7 +172,7 @@ def environment(cursor) -> dict[str, Any]:
     pool_bytes = int(cursor.fetchone()[0])
 
     counts = {}
-    for table in ("budget_data", "sub_schemes", "schemes", "fiscal_years"):
+    for table in TRACKED_TABLES:
         cursor.execute(f"SELECT COUNT(*) FROM {table}")
         counts[table] = cursor.fetchone()[0]
 
@@ -179,11 +180,13 @@ def environment(cursor) -> dict[str, Any]:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "mysql_version": version,
         "innodb_buffer_pool_mb": round(pool_bytes / 1024 / 1024, 1),
-        "os": f"{platform.system()} {platform.release()}",
+        # platform.release() reports "10" on Windows 11; the build disambiguates.
+        "os": f"{platform.system()} {platform.release()} (build {platform.version()})",
         "machine": platform.machine(),
         "cpu_count": os.cpu_count(),
         "python": platform.python_version(),
         "row_counts": counts,
+        "table_sizes_mb": table_sizes_mb(cursor),
         "buffer_pool_flushed_between_arms": False,
         "note": (
             "Warm-cache measurements. The buffer pool cannot be flushed from a "

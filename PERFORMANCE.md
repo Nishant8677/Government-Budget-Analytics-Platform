@@ -40,16 +40,25 @@ zero. Forced into the plan it delivers **7.8%**.
 | MySQL | 8.0.43 |
 | OS | Windows 11 (build 26200), x86-64, 12 logical CPUs |
 | `budget_data` rows | **921,696** |
-| `budget_data` size | 90.2 MB (data + indexes) |
 | `sub_schemes` rows | 92,240 |
 | `fiscal_years` rows | 13 |
 | InnoDB buffer pool | 128 MB (server default) |
 
-Two things follow from that last row. The buffer pool is only slightly larger
-than the table, so pages compete for residence and run-to-run variance is high —
-visible in the standard deviations below. And the pool cannot be flushed from a
-client connection without `SUPER` or a server restart, so **both arms run warm**.
-The comparison between arms is valid; the absolute latencies are a best case.
+Two things follow from that last row. The buffer pool is the same order of
+magnitude as the table, so pages compete for residence and run-to-run variance is
+high — visible in the standard deviations below. And the pool cannot be flushed
+from a client connection without `SUPER` or a server restart, so **both arms run
+warm**. The comparison between arms is valid; the absolute latencies are a best
+case.
+
+> A previous revision of this table gave `budget_data` as 90.2 MB. That figure
+> was typed in rather than captured, and a spot check returns a materially larger
+> one — with no schema change, and the same four indexes as `schema.sql`. InnoDB's
+> estimates drift with fragmentation and `ANALYZE TABLE`, so rather than swap one
+> uncaptured number for another, the row is gone. What the argument actually needs
+> is the sentence above: pool and table are the same order of magnitude. Every
+> benchmark script now records `table_sizes_mb`, so the next run of any of them
+> puts a real figure in its artifact.
 
 ## The query
 
@@ -175,7 +184,8 @@ is not the constraint**.
 
 ### The server configuration is worth 32.7%
 
-`innodb_buffer_pool_size` was at the **128 MB default** against a 90 MB table.
+`innodb_buffer_pool_size` was at the **128 MB default** against a table of
+comparable size.
 Measured by `scripts/benchmark_buffer_pool.py`, results in
 `results/buffer_pool_benchmark.json`:
 
@@ -224,7 +234,7 @@ default configuration is **7.2% slower** than simply disabling the feature. At
 
 The AHI is not a free optimisation. It is a hash index over frequently accessed
 B-tree pages, and it has to be built and maintained. Sized from a 128 MB pool it
-cannot cover a 90 MB table plus 92,240 `sub_schemes` rows, so it thrashes: the
+cannot cover the table plus 92,240 `sub_schemes` rows, so it thrashes: the
 maintenance cost is paid and the lookup benefit is not collected. Given enough
 pool to cover the working set, it pays for itself several times over.
 

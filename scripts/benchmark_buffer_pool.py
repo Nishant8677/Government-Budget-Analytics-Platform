@@ -40,6 +40,7 @@ import mysql.connector
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from config.settings import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER  # noqa: E402
+from utils.db import table_sizes_mb  # noqa: E402
 
 QUERY = """
     SELECT s.scheme_name, SUM(b.budget) AS total_budget
@@ -182,11 +183,14 @@ def main() -> int:
         "environment": {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "mysql_version": var(cur, "version"),
-            "os": f"{platform.system()} {platform.release()}",
+            # platform.release() reports "10" on Windows 11; the build disambiguates.
+            "os": f"{platform.system()} {platform.release()} (build {platform.version()})",
             "cpu_count": __import__("os").cpu_count(),
             "innodb_buffer_pool_instances": int(var(cur, "innodb_buffer_pool_instances")),
             "innodb_buffer_pool_chunk_size_mb": int(var(cur, "innodb_buffer_pool_chunk_size")) // 1024 // 1024,
             "configured_pool_mb": original // 1024 // 1024,
+            # The pool size only means something next to the working set.
+            "table_sizes_mb": table_sizes_mb(cur),
         },
         "method": (
             "Arms interleaved per round rather than run in blocks, so a warming "

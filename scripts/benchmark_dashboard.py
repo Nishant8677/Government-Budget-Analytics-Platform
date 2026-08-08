@@ -38,6 +38,7 @@ import mysql.connector
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from config.settings import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER  # noqa: E402
+from utils.db import table_sizes_mb  # noqa: E402
 
 OUTPUT = Path(__file__).resolve().parent.parent / "results" / "dashboard_benchmark.json"
 
@@ -129,7 +130,9 @@ def environment(cur) -> dict[str, Any]:
     return {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "mysql_version": version,
-        "os": f"{platform.system()} {platform.release()}",
+        # platform.release() reports "10" on Windows 11; the build disambiguates.
+        "os": f"{platform.system()} {platform.release()} (build {platform.version()})",
+        "table_sizes_mb": table_sizes_mb(cur),
         "rows_per_fiscal_year": dist,
         "real_data_rows_total": sum(real.values()),
         "note": (

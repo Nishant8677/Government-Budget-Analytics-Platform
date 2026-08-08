@@ -24,6 +24,10 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# The four tables every benchmark reports on. Kept here so the scripts agree on
+# what "the working set" means without each defining its own list.
+TRACKED_TABLES = ("budget_data", "sub_schemes", "schemes", "fiscal_years")
+
 
 def get_connection(database: str = DB_NAME) -> mysql.connector.MySQLConnection:
     """
@@ -49,6 +53,36 @@ def get_connection(database: str = DB_NAME) -> mysql.connector.MySQLConnection:
     except Error as exc:
         logger.error("MySQL connection failed: %s", exc)
         raise
+
+
+def table_sizes_mb(cursor, tables: tuple[str, ...] = TRACKED_TABLES) -> dict[str, dict[str, float]]:
+    """
+    Return data/index/total size in MB for *tables*, from information_schema.
+
+    Benchmarks record this alongside their timings because the buffer pool is
+    only meaningful relative to the working set: a 128 MB pool against a table
+    of comparable size behaves nothing like the same pool against a small one.
+    PERFORMANCE.md previously quoted a table size typed in by hand, which later
+    could not be reproduced -- capturing it per run removes the guesswork.
+
+    These are InnoDB's own estimates. They drift with fragmentation and with
+    ANALYZE TABLE, so treat them as the scale of the table rather than an exact
+    byte count.
+    """
+    placeholders = ", ".join(["%s"] * len(tables))
+    cursor.execute(
+        f"""SELECT table_name,
+                   ROUND(data_length  / 1024 / 1024, 1),
+                   ROUND(index_length / 1024 / 1024, 1)
+            FROM   information_schema.tables
+            WHERE  table_schema = DATABASE() AND table_name IN ({placeholders})""",
+        tables,
+    )
+    return {
+        name: {"data_mb": float(data), "index_mb": float(idx),
+               "total_mb": round(float(data) + float(idx), 1)}
+        for name, data, idx in cursor.fetchall()
+    }
 
 
 def get_server_connection() -> mysql.connector.MySQLConnection:

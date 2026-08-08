@@ -46,6 +46,7 @@ import mysql.connector
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from config.settings import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER  # noqa: E402
+from utils.db import table_sizes_mb  # noqa: E402
 
 OUTPUT = Path(__file__).resolve().parent.parent / "results" / "dashboard_baseline_benchmark.json"
 
@@ -167,6 +168,7 @@ def environment(cur) -> dict[str, Any]:
         # rather than leave the artifact disagreeing with the docs.
         "os": f"{platform.system()} {platform.release()} (build {platform.version()})",
         "innodb_buffer_pool_mb": float(pool_mb),
+        "table_sizes_mb": table_sizes_mb(cur),
         "rows_per_fiscal_year": dist,
         "real_data_rows_total": sum(n for n in dist.values() if n < 1000),
         "synthetic_rows_total": sum(n for n in dist.values() if n >= 1000),
