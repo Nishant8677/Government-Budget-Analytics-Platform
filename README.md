@@ -123,7 +123,7 @@ Full method, all raw samples, and the `EXPLAIN FORMAT=JSON` for every arm are in
 > That index had never existed in the schema and no script in the repository
 > recorded a measurement. The figures above replace it.
 
-### What actually helped: buffer pool sizing — 33.8%
+### What actually helped: buffer pool sizing — 32.7%
 
 If the schema was not the constraint, the next question was what is. The server
 was running `innodb_buffer_pool_size` at its **128 MB default** against a 90 MB
@@ -199,6 +199,13 @@ python scripts/benchmark_dashboard.py --repeats 3
 > `Q2` filters `MAX(fiscal_year_id)`, a synthetic year. On the real data the
 > dashboard is genuinely fast. The figures above are what happens at the
 > advertised 1M-row scale.
+>
+> The generator also replicates one year's sub-schemes ten times, giving a
+> fan-out of ~4,010 sub-schemes per scheme that a real budget hierarchy would
+> not have. The predicate-pushdown finding is a property of the optimizer and
+> holds regardless; the buffer pool percentages are specific to this shape.
+> [What generalizes, and what does not](PERFORMANCE.md#what-generalizes-and-what-does-not)
+> separates the three findings.
 
 ### Not currently measured
 

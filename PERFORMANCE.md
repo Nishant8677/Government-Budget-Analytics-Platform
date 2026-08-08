@@ -155,7 +155,7 @@ The optimizer produces the same plan shape regardless — it still scans all
 92,087 `sub_schemes` rows and probes `budget_data` by unique key. The query text
 is not the constraint.
 
-### The server configuration is worth 33.8%
+### The server configuration is worth 32.7%
 
 `innodb_buffer_pool_size` was at the **128 MB default** against a 90 MB table.
 Measured by `scripts/benchmark_buffer_pool.py`, results in
@@ -228,7 +228,7 @@ index that the optimizer declines to use, and quoting a number that only appears
 under `FORCE INDEX`, would repeat the original problem in a quieter voice.
 
 **The available win was in the server, not the schema.** Sizing the buffer pool
-is worth 33.8%; the index the documentation celebrated is worth 0.8%. Nothing in
+is worth 32.7%; the index the documentation celebrated is worth 0.8%. Nothing in
 this repository had ever looked at server configuration, and every published
 figure concerned an index that did not exist.
 
@@ -367,6 +367,56 @@ made unilaterally.
 "Benchmarks run on 1,000,000 rows" and "Dashboard Load Time ~38 ms" cannot both
 hold. On the real 166-row data the dashboard genuinely is that fast. At the
 advertised 1M-row scale its default page load is over three minutes.
+
+## What generalizes, and what does not
+
+Every figure on this page was measured on the dataset described under
+[First, the data is two disjoint datasets](#first-the-data-is-two-disjoint-datasets):
+166 real rows and 921,530 synthetic ones — 92,153 replicated across ten
+backdated years — spread over 92,240 `sub_schemes` under 23 `schemes`, a fan-out
+of roughly 4,010 sub-schemes per scheme. That is not the shape of a real budget
+hierarchy, and it is
+load-bearing for some of the results above but not others. Quoting all three as
+though they were equally portable would repeat, in a different form, the failure
+this document exists to correct.
+
+| Finding | Rests on | Portable? |
+|---|---|---|
+| `=` pushes into a `GROUP BY` view, `IN`/`OR` does not | MySQL's rewrite rules | **Yes** |
+| The AHI mediates the buffer pool effect | working set vs. pool size | **Mechanism yes, numbers no** |
+| The cost model mis-ranks the available plans | this schema's join shape | **Unknown** |
+
+**Predicate pushdown is the robust one.** The magnitudes scale with row and group
+counts, but the behaviour — one equality is pushed into the view, a disjunction
+is not — is a property of the optimizer, not of this data. Any table large enough
+for the aggregation to cost something will show it, which is why the 369× and the
+8.9× share a single explanation. This is the finding worth carrying to another
+codebase.
+
+**The AHI result reproduces in shape, not in percentages.** That the adaptive
+hash index is sized as a fraction of the buffer pool, and thrashes when it cannot
+cover the working set, is general. The specific split — 7.2% *harmful* at 128 MB,
+worth 28.9% at 1 GB — is a function of the working-set-to-pool ratio and of the
+~92,000 `eq_ref` probes this query issues per execution. That probe count is
+itself an artifact of `sub_schemes` being nearly as large as one year of
+`budget_data`. At a realistic fan-out the probe count falls and the AHI's
+leverage falls with it. Expect the same curve, not the same numbers.
+
+**The cost-model inversion is an observation, not a law.** `FORCE INDEX` was
+rated 2.7× more expensive than the chosen plan and measured faster — on this
+schema, at this cardinality, at this buffer pool size. It is recorded because an
+inverted ordering is worth knowing can happen, not because it predicts anything
+elsewhere.
+
+One gap worth naming: because the generator replicates a single year ten times,
+every backdated year has identical cardinality. Nothing here tests plan stability
+across skewed partitions, which is the case real budget data would actually
+present.
+
+If the dataset is ever replaced with real data at a realistic fan-out, re-run all
+three scripts before quoting any figure above. The pushdown result should hold;
+the buffer pool percentages will move; the cost-model comparison may not survive
+at all.
 
 ## Reproducing
 
