@@ -179,19 +179,28 @@ entirely — and it is not an indexing problem.
 Two queries were 99.5% of the page load. Three changes, each verified to return
 byte-identical rows before being applied, cut it **7.2×**.
 
-The mechanism is **predicate pushdown**, not indexes. `v_scheme_summary` costs
-1.3 ms filtered to one fiscal year and 205,039 ms unfiltered — same view. MySQL 8
-pushes a single equality into a `GROUP BY` view but not a disjunction, which is
-why one insight query using `IN (...)` cost 873 ms while four siblings using `=`
-cost 2–3 ms. Splitting it into a `UNION ALL` of two equality filters made it
-**368× faster**.
+The mechanism is **predicate pushdown**, not indexes. MySQL 8 pushes a single
+equality into a `GROUP BY` view but will not push a disjunction. `EXPLAIN` puts
+the `IN` and `OR` forms at an identical `query_cost` of 22,695 — materialising
+201,714 rows from `v_scheme_summary` — against **11.50** for a `UNION ALL` of two
+equality filters, which materialises 80. Two orders of magnitude, and unlike the
+wall-clock it does not move between runs.
 
 `v_fiscal_year_totals` separately joined `sub_schemes` just to count a column
-`budget_data` already had.
+`budget_data` already had — which cost far more than the wasted fetch suggests,
+because it forces roughly 1.2 million `eq_ref` probes.
 
 ```bash
 python scripts/benchmark_dashboard.py --repeats 3
+python scripts/benchmark_dashboard_baseline.py   # re-measures the Before column
 ```
+
+> **The *Before* column was never persisted**, and a later attempt to reproduce
+> it recovered the page-load figures but not the two middle rows. Both runs are
+> reported in
+> [PERFORMANCE.md](PERFORMANCE.md#reproducing-the-pre-fix-figures); the `7.2×`
+> and the `8.9×` reproduced within 4%, the `1.6×` and the growth-query ratio did
+> not.
 
 > **A caveat that matters more than the numbers.** The synthetic generator
 > backdates its rows to 2000–2010 while the real data sits in 2020–2023, so the

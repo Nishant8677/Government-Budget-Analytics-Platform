@@ -6,13 +6,17 @@ the one it comes from: `results/index_benchmark.json` for the index results,
 `results/dashboard_benchmark.json` for the dashboard's post-fix state. Re-run
 the scripts and you get new files.
 
-Four figures on this page are **not** persisted anywhere and are quoted from
-runs that were never captured to disk — the pre-fix dashboard column, the
-query-rewrite comparison, the `IN`-versus-`OR` pair, and the group count in
-`v_scheme_summary`. They are marked *(not persisted)* where they appear. The
-scripts write to fixed paths, so re-running one after a change overwrites the
-evidence for what came before it; that is how the pre-fix column was lost, and
-backing it again needs a `--baseline` mode rather than another run.
+The pre-fix dashboard figures were originally quoted from a run that was never
+captured — `scripts/benchmark_dashboard.py` writes to a fixed path, so running
+it after the fix overwrote the evidence for what came before. They have since
+been re-measured by `scripts/benchmark_dashboard_baseline.py` into
+`results/dashboard_baseline_benchmark.json`, and **three of the four did not
+reproduce**. Both runs are reported side by side under
+[Reproducing the pre-fix figures](#reproducing-the-pre-fix-figures); read that
+section before quoting any millisecond value on this page.
+
+One table remains unbacked — the query-rewrite comparison — and is marked
+*(not persisted)* where it appears.
 
 ```bash
 python scripts/benchmark_index.py --trials 3 --repeats 7
@@ -291,13 +295,12 @@ Default filter state (`"All Years"` / `"All Schemes"`, which are the first
 selectbox options at `dashboard.py:410-412`, so this is what loads with no user
 interaction).
 
-> **This whole table is *(not persisted)*.** `scripts/benchmark_dashboard.py`
-> writes to a fixed path, so the post-fix run overwrote it and
-> `results/dashboard_benchmark.json` holds only the after-state. These medians
-> survive in prose and in the message of commit `9947a6d`, nowhere else. Two of
-> the three are still re-measurable — `v_scheme_summary` was bypassed, not
-> modified — but `load_fiscal_year_totals` needs the removed join restored to
-> reproduce.
+> **These are the original August medians, and they were never persisted.**
+> `scripts/benchmark_dashboard.py` writes to a fixed path, so the post-fix run
+> overwrote them; `results/dashboard_benchmark.json` holds only the after-state.
+> They have since been re-measured — see
+> [Reproducing the pre-fix figures](#reproducing-the-pre-fix-figures). The
+> 205,039 ms reproduced within 3.7%. The other two did not.
 
 | Loader | Median | Rows |
 |---|---|---|
@@ -327,9 +330,14 @@ it aggregates the whole table by definition, and it runs on every page load.
 computes `COUNT(DISTINCT sub_scheme_id)` per group. Filtered to one year it costs
 1.3 ms, because MySQL 8 pushes the predicate into the view. Unfiltered there is
 nothing to push, so it computes `COUNT(DISTINCT)` for every
-`(scheme, group, fiscal_year)` group across 921,696 rows — 299 of them, a count
-taken interactively and *(not persisted)* — and the outer query re-aggregates
-the result.
+`(scheme, group, fiscal_year)` group across 921,696 rows — **287** of them — and
+the outer query re-aggregates the result.
+
+> Earlier revisions of this page said 299. That is 23 schemes × 13 fiscal years,
+> which is a product, not a count: the ten synthetic years each carry all 23
+> schemes, but the three real years carry only 17, 18 and 22, so twelve
+> combinations do not exist. Measured, recorded in
+> `results/dashboard_baseline_benchmark.json`.
 
 The single-year path being 1.3 ms and the all-years path being 205 s is the same
 view, and the difference is entirely whether a predicate can be pushed down.
@@ -339,7 +347,7 @@ view, and the difference is entirely whether a predicate can be pushed down.
 Three changes, each verified to return byte-identical rows *before* being
 applied. Re-measured with the same script:
 
-| | Before *(not persisted)* | After | Factor |
+| | Before (Aug) | After (Aug) | Factor |
 |---|---|---|---|
 | `load_scheme_summary("All Years")` | 205,039 ms | 23,039 ms | **8.9×** |
 | `load_fiscal_year_totals` | 11,144 ms | 6,915 ms | 1.6× |
@@ -348,8 +356,11 @@ applied. Re-measured with the same script:
 
 Every figure in the *After* column is read from
 `results/dashboard_benchmark.json`, and 29,971 ms is the exact sum of the eleven
-medians it records. No figure in the *Before* column has an artifact behind it,
-so each factor is only as good as a number that was never written down.
+medians it records. The *Before* column was never persisted. A later attempt to
+reproduce it recovered the page-load figures but not the other two — the two
+middle factors above should be read against
+[Reproducing the pre-fix figures](#reproducing-the-pre-fix-figures) rather than
+quoted on their own.
 
 **1. `v_fiscal_year_totals` joined a table it did not need.** It joined
 `sub_schemes` solely to compute `COUNT(DISTINCT ss.sub_scheme_id)`, but
@@ -369,16 +380,30 @@ is the most interesting of the three. The query used
 sibling insight queries — identical in shape but using `fiscal_year = '...'` —
 cost 2–3 ms.
 
-Rewriting `IN` as `OR` changed nothing (874.8 ms vs 873.5 ms — *(not
-persisted)*, and the control that makes this section an argument rather than an
-anecdote, so it is the first thing a `--baseline` mode should capture), which
-rules out `IN` itself. **MySQL pushes a single equality predicate into a
-`GROUP BY` view but will not push a disjunction.** With `IN` or `OR` there is
-nothing to push, so the view aggregates all 921,696 rows. Filtered one year at a
-time, each branch pushes down and the same rows come back in 2.37 ms.
+The timings that first suggested this are the least reliable evidence for it, so
+the argument rests on the plans instead. `EXPLAIN FORMAT=JSON` for all three
+forms is committed in `results/dashboard_baseline_benchmark.json`:
 
-That one mechanism explains both the 368× here and the 8.9× above, and it is the
-actual performance story of this dashboard — not indexing.
+| | `IN (...)` | `OR` | `UNION ALL` of two `=` |
+|---|---|---|---|
+| `query_cost` | 22,695.32 | **22,695.32** | **11.50** |
+| rows materialised from `v_scheme_summary` | 201,714 | 201,714 | **41 + 39 = 80** |
+| `fiscal_years` access | `range` | `range` | **`const`** per branch |
+
+**`IN` and `OR` produce byte-identical plans at identical cost.** That is what
+rules out `IN` itself — not the two timings that happened to land 1.3 ms apart,
+which on a re-run landed 481 ms apart. And the pushdown is directly visible: a
+single equality collapses `fiscal_years` to a `const` and the view materialises
+80 rows; a disjunction cannot be folded in, so it materialises 201,714.
+
+**MySQL pushes a single equality predicate into a `GROUP BY` view but will not
+push a disjunction.** 1,973× on estimated cost, 2,521× on rows materialised.
+Neither number moves with machine load, which is why they are quoted here in
+preference to the wall-clock. All three forms return byte-identical rows; the
+digests are recorded alongside the plans.
+
+That one mechanism explains both this and the 8.9× above, and it is the actual
+performance story of this dashboard — not indexing.
 
 ### What remains
 
@@ -398,6 +423,47 @@ made unilaterally.
 "Benchmarks run on 1,000,000 rows" and "Dashboard Load Time ~38 ms" cannot both
 hold. On the real 166-row data the dashboard genuinely is that fast. At the
 advertised 1M-row scale its default page load is over three minutes.
+
+## Reproducing the pre-fix figures
+
+The *Before* column above was measured once, in August, by a script that writes
+to a fixed path — so the post-fix run overwrote it and nothing survived except
+prose. `scripts/benchmark_dashboard_baseline.py` re-measures it: three of the
+four figures are recoverable read-only, because the fix bypassed
+`v_scheme_summary` rather than modifying it, and the fourth restores the removed
+join to `v_fiscal_year_totals` for the duration of the run and puts it back in a
+`finally`. Results in `results/dashboard_baseline_benchmark.json`.
+
+| | August | Re-run | |
+|---|---|---|---|
+| `load_scheme_summary("All Years")` pre-fix | 205,039 ms | 197,479 ms | −3.7% |
+| `load_fiscal_year_totals` pre-fix | 11,144 ms | **26,724 ms** | 2.4× |
+| growth `IN` | 873 ms | **1,550 ms** | 1.8× |
+| growth `OR` | 874.8 ms | **1,069 ms** | 1.2× |
+| growth `UNION ALL` | 2.37 ms | **6.50 ms** | 2.7× |
+| `v_scheme_summary` groups | 299 | **287** | wrong, see above |
+
+The post-fix state was re-measured in the same session as a control, and it
+reproduces: `load_scheme_summary("All Years")` 23,039 → 23,500 ms, 
+`load_fiscal_year_totals` 6,915 → 7,167 ms, page load 29,971 → 30,687 ms. All
+within 4%. **So the machine is not simply slower, and the drift is confined to
+the figures that were never written to a file.**
+
+`load_fiscal_year_totals` is the one worth explaining. It was not an ordering
+effect — measured first, before anything expensive, it gives 26,863 ms against
+26,724 ms measured last. The plans put the pre-fix query at a `query_cost` of
+1,736,195 against 132,309 for the post-fix one, a 13× gap: the removed join
+forces `fy`(13) × `ss`(92,087) nested loops, roughly 1.2 million `eq_ref` probes
+into `budget_data`, where the post-fix plan reaches `budget_data` once by `ref`.
+That is a better account of why the join was expensive than "it fetched 92,240
+rows to read a value it already had", and it makes 26.7 s easier to believe than
+11.1 s. But this page cannot say the August figure was wrong — only that it does
+not reproduce, and that no artifact exists to adjudicate.
+
+Both sets are left standing rather than one being quietly replaced. Three of the
+sub-second figures also vary run to run by 30–90%, so the honest reading is that
+these queries were sampled at n=3 rather than measured, and that the mechanism —
+which the plans establish exactly — was always the load-bearing part.
 
 ## What generalizes, and what does not
 
@@ -420,8 +486,10 @@ this document exists to correct.
 **Predicate pushdown is the robust one.** The magnitudes scale with row and group
 counts, but the behaviour — one equality is pushed into the view, a disjunction
 is not — is a property of the optimizer, not of this data. Any table large enough
-for the aggregation to cost something will show it, which is why the 368× and the
-8.9× share a single explanation. This is the finding worth carrying to another
+for the aggregation to cost something will show it, which is why the growth
+query and the 8.9× share a single explanation. It is also the finding that
+survived re-measurement intact, because it is visible in the plan and not only
+in the clock. This is the finding worth carrying to another
 codebase.
 
 **The AHI result reproduces in shape, not in percentages.** That the adaptive
@@ -459,8 +527,25 @@ python scripts/benchmark_index.py --trials 3 --repeats 7
 python scripts/benchmark_buffer_pool.py --rounds 4 --repeats 7
 ```
 
-These write `results/index_benchmark.json` and
-`results/buffer_pool_benchmark.json`, containing every individual sample, the
-full `EXPLAIN FORMAT=JSON` for each arm, the hit rates, and the environment the
-run was taken in. Different hardware will produce different latencies; replace
-the tables above from your own output rather than trusting these.
+```bash
+python scripts/benchmark_dashboard.py --repeats 3
+```
+
+```bash
+python scripts/benchmark_dashboard_baseline.py   # ~15 min; needs the database
+```
+
+These write `index_benchmark.json`, `buffer_pool_benchmark.json`,
+`dashboard_benchmark.json` and `dashboard_baseline_benchmark.json` under
+`results/`, containing every individual sample, the full `EXPLAIN FORMAT=JSON`
+for each arm, the hit rates, and the environment the run was taken in. Different
+hardware will produce different latencies; replace the tables above from your
+own output rather than trusting these.
+
+The baseline script is the only one that modifies the schema. It restores
+`v_fiscal_year_totals` in a `finally`, verifies the restore, and reports whether
+the recovered definition is byte-identical to the one it found. If it is ever
+killed between the swap and the restore, re-run `database/views.sql`. It also
+checkpoints after every measurement, because the first attempt at that run was
+killed partway through and a 205-second query should outlive the process that
+produced it.
