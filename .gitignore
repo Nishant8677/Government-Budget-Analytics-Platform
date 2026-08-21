@@ -58,3 +58,4 @@ data/cleaned_*.csv
 .coverage
 htmlcov/
 backups/
+.ruff_cache/

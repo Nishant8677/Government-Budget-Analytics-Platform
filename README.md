@@ -4,13 +4,15 @@
 [![MySQL](https://img.shields.io/badge/MySQL-8.0+-4479A1?style=for-the-badge&logo=mysql&logoColor=white)](https://mysql.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.35+-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io)
 [![Plotly](https://img.shields.io/badge/Plotly-5.0+-3F4F75?style=for-the-badge&logo=plotly&logoColor=white)](https://plotly.com)
-[![pytest](https://img.shields.io/badge/pytest-23%20passing-brightgreen?style=for-the-badge&logo=pytest)](tests/)
+[![pytest](https://img.shields.io/badge/pytest-29%20passing-brightgreen?style=for-the-badge&logo=pytest)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 
-> A database engineering portfolio project demonstrating production-oriented design principles.
-> Features a scalable synthetic dataset generator supporting up to 1 million rows for performance testing,
-> advanced MySQL query optimization via covering indexes, ACID transactions (REPEATABLE READ), 
-> and concurrent ETL processing. Includes a modular Python ETL pipeline, 23 automated tests, and a 6-tab Streamlit analytics dashboard.
+> A database engineering portfolio project, and a record of measuring its own claims.
+> A synthetic generator scales the dataset to ~922K rows, against which a covering index was
+> built, benchmarked at 0.8% — inside the noise — and **rejected**; the real wins were server
+> configuration and a MySQL predicate-pushdown limit. Includes a modular Python ETL pipeline,
+> 29 automated tests, reproduction tests for two concurrency bugs, and a 6-tab Streamlit dashboard.
+> Every published figure is regenerable from a committed artifact in `results/`.
 ---
 
 ## 📸 Screenshots
@@ -50,7 +52,7 @@ User ⇄ Streamlit Dashboard ⇄ SQL Views ⇄ MySQL Database ⇦ Python ETL ⇦
 | Data Source | CSV | Government of India Statement 14 |
 | Extract | `pandas.read_csv` | Validates file, returns DataFrame |
 | Transform | pandas | Forward-fill, remove summaries, reshape |
-| Load | `mysql-connector-python` | Upsert with transaction + rollback |
+| Load | `mysql-connector-python` | Upsert; bad rows skipped, systemic failure rolls back |
 | Database | MySQL 8 / InnoDB | 6-table normalised schema |
 | Views | SQL `CREATE VIEW` | Analytical abstraction layer |
 | Dashboard | Streamlit + Plotly | 6-tab interactive analytics |
@@ -71,10 +73,10 @@ groups (1) ──── (∞) schemes (1) ──── (∞) sub_schemes ──�
 |---|---|---|
 | `groups` | 1 | `UNIQUE(group_name)` |
 | `schemes` | 23 | `UNIQUE(scheme_name, group_id)` |
-| `major_heads` | 7 | `UNIQUE(major_head_code)` |
-| `sub_schemes` | 68 | `UNIQUE(sub_scheme_name, scheme_id)` |
-| `fiscal_years` | 3 | `UNIQUE(fiscal_year)`, FORMAT CHECK |
-| `budget_data` | 201 | `UNIQUE(sub_scheme_id, fiscal_year_id)` |
+| `major_heads` | 19 | `UNIQUE(major_head_code)` |
+| `sub_schemes` | 92,257 | `UNIQUE(sub_scheme_name, scheme_id, programme_name, sub_programme_name)` |
+| `fiscal_years` | 13 | `UNIQUE(fiscal_year)`, FORMAT CHECK |
+| `budget_data` | 921,720 | `UNIQUE(sub_scheme_id, fiscal_year_id)` |
 
 All tables: `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`. Every FK column has an explicit index.
 
@@ -86,7 +88,8 @@ This project was built to demonstrate senior-level database engineering concepts
 
 - [**Architecture Decisions (ADR)**](DECISIONS.md): Why MySQL? Why 3NF? Why Upserts? Why the covering index was rejected. Isolation level and locking reasoning live here too.
 - [**Synthetic Data Generator**](DATA_GENERATOR.md): Scaling the database for performance testing.
-- [**Index Engineering & Performance**](PERFORMANCE.md): Measuring the covering index, and why it was not adopted.
+- [**Index Engineering & Performance**](PERFORMANCE.md): Measuring the covering index and why it was not adopted; the buffer pool / adaptive hash index result; the predicate-pushdown finding; and an attempt to reproduce every figure months later.
+- [**ADR 7 — Sub-scheme grain**](docs/ADR-007-scope-sub-scheme-grain.md): A data-loss bug, the natural key that fixes it, and the double-counting it exposed.
 
 Concurrency behaviour can be exercised directly with
 `scripts/simulate_concurrency.py` and `scripts/test_constraints.py`.
@@ -247,8 +250,8 @@ file the way `benchmark_index.py` does.
 
 - **Modular ETL** — Extract / Transform / Load in separate modules, wired by an orchestrator
 - **Idempotent pipeline** — `INSERT IGNORE` + `ON DUPLICATE KEY UPDATE`; safe to re-run
-- **Transaction safety** — single commit; rollback on any failure
-- **23 automated tests** — covering all ETL logic, no database required
+- **Transaction safety** — single commit; bad rows skipped and counted, systemic failure rolls back
+- **29 automated tests** — covering all ETL logic, no database required
 - **Config validation** — clear error messages before any DB operation
 - **File logging** — every run appended to `logs/application.log`
 - **manage.py CLI** — `setup`, `load`, `validate`, `dashboard`, `test`
@@ -270,49 +273,69 @@ Through this project I learned:
 ## 📁 Project Structure
 
 ```
-DBMS_project/
-│
-├── app/
-│   └── dashboard.py          # 6-tab Streamlit analytics dashboard
-│
-├── config/
-│   ├── settings.py            # Environment-based configuration (reads .env)
-│   └── validator.py           # Config validation guard (nice errors, not crashes)
-│
-├── database/
-│   ├── schema.sql             # 6-table normalised schema, constraints, indexes
-│   ├── views.sql              # 3 analytical SQL views
-│   └── setup.py              # Idempotent DB initialiser
-│
-├── etl/
-│   ├── extract.py             # Extract: read + validate raw CSV
-│   ├── transform.py           # Transform: clean, forward-fill, reshape
-│   ├── load.py                # Load: upsert with transaction + rollback
-│   └── pipeline.py           # Orchestrator: Extract → Transform → Load
-│
-├── tests/
-│   ├── conftest.py            # Shared pytest fixtures (no DB required)
-│   └── test_transform.py      # 23 tests: extract, transform, fiscal-year mapping
-│
-├── utils/
-│   ├── db.py                  # MySQL connection factory
-│   └── logger.py             # Logs to stdout + logs/application.log
-│
-├── data/
-│   └── Details_of_Tax_Revenue.csv   # Raw source (Government of India)
-│
-├── assets/screenshots/
-│   ├── architecture.png       # System architecture diagram
-│   └── er_diagram.png        # Entity-Relationship diagram
-│
-├── logs/                      # Auto-created — application.log written here
-│
-├── .env.example               # Template — copy to .env and fill credentials
-├── .gitignore
-├── manage.py                  # CLI: setup / load / validate / dashboard / test
-├── requirements.txt
-├── setup_db.py               # Standalone: python setup_db.py
-└── run_etl.py                # Standalone: python run_etl.py
+Government-Budget-Analytics-Platform/
+|
++-- app/
+|   \-- dashboard.py            # 6-tab Streamlit analytics dashboard
+|
++-- config/
+|   +-- settings.py             # Environment-based configuration (reads .env)
+|   \-- validator.py            # Config validation guard (nice errors, not crashes)
+|
++-- database/
+|   +-- schema.sql              # 6-table normalised schema, constraints, indexes
+|   +-- views.sql               # 3 analytical SQL views
+|   \-- setup.py                # Idempotent DB initialiser
+|
++-- etl/
+|   +-- extract.py              # Extract: read + validate raw CSV
+|   +-- transform.py            # Transform: clean, filter summaries, reshape
+|   +-- load.py                 # Load: upsert (FOR SHARE read-back), skip-and-continue
+|   \-- pipeline.py             # Orchestrator: Extract -> Transform -> Load
+|
++-- scripts/                    # Benchmarks, migrations, concurrency tests
+|   +-- benchmark_index.py           # Covering index, 3 arms x 21 samples
+|   +-- benchmark_buffer_pool.py     # Buffer pool x AHI 2x2, interleaved
+|   +-- benchmark_dashboard.py       # What the dashboard actually issues
+|   +-- benchmark_dashboard_baseline.py  # Re-measures the pre-fix figures
+|   +-- benchmark.py / benchmark_cache.py
+|   +-- generate_synthetic_data.py   # Scales the table to ~922K rows
+|   +-- migrate_sub_scheme_grain.py  # ADR 7 migration, verified against source
+|   +-- test_upsert_race.py          # Reproduces a REPEATABLE READ race
+|   +-- test_pool_concurrency.py     # Shared connection vs pool, under load
+|   \-- simulate_concurrency.py / test_constraints.py
+|
++-- results/                    # Committed artifacts -- every published figure
+|   +-- index_benchmark.json         # Raw samples + EXPLAIN per arm
+|   +-- buffer_pool_benchmark.json   # 2x2 grid, hit rates, raw samples
+|   +-- dashboard_benchmark.json     # Post-fix page load
+|   +-- dashboard_baseline_benchmark.json  # Pre-fix re-measurement
+|   \-- dashboard_benchmark_control_run.json  # Same-session control
+|
++-- tests/
+|   +-- conftest.py             # Shared pytest fixtures (no DB required)
+|   \-- test_transform.py       # 29 tests: extract, transform, identity, NULLs
+|
++-- utils/
+|   +-- db.py                   # Connection factory, pool, table-size capture
+|   \-- logger.py               # Logs to stdout + logs/application.log
+|
++-- docs/
+|   \-- ADR-007-scope-sub-scheme-grain.md  # Scope + outcome of the grain fix
+|
++-- .github/workflows/ci.yml    # ruff + pytest on every push and PR
+|
++-- data/Details_of_Tax_Revenue.csv   # Raw source (Government of India)
++-- assets/screenshots/         # Architecture, ER diagram, tab captures
++-- logs/                       # Auto-created -- application.log written here
+|
++-- PERFORMANCE.md              # Index, buffer pool, AHI, pushdown, reproduction
++-- DECISIONS.md                # ADRs 1-7
++-- DATA_GENERATOR.md           # How the synthetic rows are made
++-- manage.py                   # CLI: setup / load / validate / dashboard / test
++-- setup_db.py / run_etl.py    # Standalone entry points
++-- pytest.ini / ruff.toml      # Test collection scope, lint rule set
+\-- .env.example                # Template -- copy to .env and fill credentials
 ```
 
 ---
@@ -372,7 +395,7 @@ python manage.py test
 Expected output:
 ```
 ============================= test session starts =============================
-collected 23 items
+collected 29 items
 
 tests/test_transform.py::TestExtract::test_raises_file_not_found_on_missing_csv PASSED
 tests/test_transform.py::TestExtract::test_returns_dataframe_for_valid_csv PASSED
@@ -380,10 +403,10 @@ tests/test_transform.py::TestTransformRowFiltering::test_removes_total_rows PASS
 ...
 tests/test_transform.py::TestGetFiscalYearRecords::test_fiscal_year_values_are_valid_strings PASSED
 
-============================== 23 passed in 0.23s ==============================
+============================== 29 passed in 0.28s ==============================
 ```
 
-Tests are grouped into 6 classes:
+Tests are grouped into 7 classes:
 - `TestExtract` — file validation
 - `TestTransformRowFiltering` — summary row removal
 - `TestTransformForwardFill` — sparse CSV fills
@@ -427,8 +450,8 @@ The original `pythoncode.py` used string-matching on column names to determine w
 |---|---|---|
 | Python | 3.11 | Core language |
 | MySQL | 8.0 | Relational database |
-| mysql-connector-python | 9.x | DB driver |
-| pandas | 2.x | ETL data manipulation |
+| mysql-connector-python | 26.x | DB driver |
+| pandas | 3.x | ETL data manipulation |
 | python-dotenv | 1.x | Environment config |
 | Streamlit | 1.35+ | Dashboard framework |
 | Plotly | 5.x / 6.x | Interactive charts |
@@ -452,7 +475,7 @@ The original `pythoncode.py` used string-matching on column names to determine w
 
 ## 🔮 Future Work
 
-- [ ] GitHub Actions CI — run `pytest` on every push
+- [x] ~~GitHub Actions CI~~ — done: `ruff` + `pytest` on every push and PR
 - [ ] Support additional fiscal years (extend `FISCAL_YEAR_COLUMN_MAP`)
 - [ ] State-level budget breakdown (add `states` table to schema)
 - [ ] Streamlit authentication for multi-user deployment
